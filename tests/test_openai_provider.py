@@ -128,6 +128,32 @@ def test_chat_marks_tool_call_parse_error_when_arguments_invalid_json():
     )
 
 
+def test_chat_parses_legacy_function_call_when_tool_calls_empty():
+    response = _Obj(
+        choices=[
+            _Obj(
+                message=_Obj(
+                    content="",
+                    tool_calls=[],
+                    function_call=_Obj(
+                        name="use_skill",
+                        arguments='{"name": "using-superpowers"}',
+                    ),
+                )
+            )
+        ]
+    )
+    p = _provider_with_resp(response)
+
+    r = p.chat(messages=[], system="sys", tools=[])
+
+    assert r.stop_reason == "tool_use"
+    assert len(r.tool_calls) == 1
+    assert r.tool_calls[0].name == "use_skill"
+    assert r.tool_calls[0].inputs == {"name": "using-superpowers"}
+    assert r.assistant_message["tool_calls"][0]["function"]["name"] == "use_skill"
+
+
 def test_chat_uses_max_completion_tokens_for_official_openai_endpoint():
     captured: dict = {}
 
@@ -146,6 +172,7 @@ def test_chat_uses_max_completion_tokens_for_official_openai_endpoint():
     r = p.chat(messages=[], system="sys", tools=[])
 
     assert r.stop_reason == "end_turn"
+    assert captured["temperature"] == 0.0
     assert "max_completion_tokens" in captured
     assert "max_tokens" not in captured
 
@@ -168,6 +195,7 @@ def test_chat_uses_max_tokens_for_compat_endpoints():
     r = p.chat(messages=[], system="sys", tools=[])
 
     assert r.stop_reason == "end_turn"
+    assert captured["temperature"] == 0.0
     assert "max_tokens" in captured
     assert "max_completion_tokens" not in captured
 
