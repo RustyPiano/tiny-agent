@@ -57,8 +57,33 @@ class AgentRuntime:
     def execute_tools(self, response: LLMResponse) -> list[dict]:
         results: list[dict] = []
         for tc in response.tool_calls:
-            log_event("tool_call", self.run_ctx, tool=tc.name, inputs=tc.inputs)
-            output = self.tool_registry.execute(tc.name, tc.inputs)
+            inputs_obj = tc.inputs if isinstance(tc.inputs, dict) else {}
+            execute_inputs = dict(inputs_obj)
+            log_inputs = dict(inputs_obj)
+
+            parse_error = tc.parse_error
+            raw_arguments = tc.raw_arguments
+            if not isinstance(tc.inputs, dict):
+                parse_error = (
+                    parse_error
+                    or "tool inputs 必须是 object，"
+                    f"实际: {type(tc.inputs).__name__}"
+                )
+                if raw_arguments is None:
+                    raw_arguments = str(tc.inputs)
+
+            if parse_error:
+                execute_inputs["_tool_parse_error"] = parse_error
+                if raw_arguments is not None:
+                    execute_inputs["_tool_raw_arguments"] = raw_arguments
+                log_inputs = {
+                    **log_inputs,
+                    "_tool_parse_error": parse_error,
+                    "_tool_raw_arguments_preview": (raw_arguments or "")[:200],
+                }
+
+            log_event("tool_call", self.run_ctx, tool=tc.name, inputs=log_inputs)
+            output = self.tool_registry.execute(tc.name, execute_inputs)
             results.append(self.provider.format_tool_result(tc.id, output))
             output_text = str(output)
             log_event("tool_result", self.run_ctx, tool=tc.name, output_preview=output_text[:120])

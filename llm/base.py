@@ -10,6 +10,8 @@ class ToolCall:
     id: str
     name: str
     inputs: dict
+    parse_error: str | None = None
+    raw_arguments: str | None = None
 
 
 @dataclass

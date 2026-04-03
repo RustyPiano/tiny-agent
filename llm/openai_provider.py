@@ -47,19 +47,40 @@ class OpenAIProvider(BaseLLMProvider):
                 if not name:
                     continue
 
-                args = _get_field(fn, "arguments", "{}")
-                if not isinstance(args, str):
-                    args = json.dumps(args)
+                parse_error = None
+                args_payload = _get_field(fn, "arguments", "{}")
+                raw_arguments = args_payload if isinstance(args_payload, str) else None
 
-                try:
-                    inputs = json.loads(args)
-                except json.JSONDecodeError:
+                if isinstance(args_payload, str):
+                    try:
+                        parsed_inputs = json.loads(args_payload) if args_payload.strip() else {}
+                    except json.JSONDecodeError as e:
+                        parsed_inputs = {}
+                        parse_error = f"arguments JSON 解析失败: {e.msg} (pos={e.pos})"
+                else:
+                    parsed_inputs = args_payload
+                    try:
+                        raw_arguments = json.dumps(args_payload, ensure_ascii=False)
+                    except TypeError:
+                        raw_arguments = str(args_payload)
+
+                if isinstance(parsed_inputs, dict):
+                    inputs = parsed_inputs
+                else:
                     inputs = {}
+                    parse_error = (
+                        parse_error
+                        or "arguments JSON 必须是 object，"
+                        f"实际: {type(parsed_inputs).__name__}"
+                    )
+
                 tool_calls.append(
                     ToolCall(
                         id=_get_field(tc, "id") or f"tool_call_{i}",
                         name=name,
                         inputs=inputs,
+                        parse_error=parse_error,
+                        raw_arguments=raw_arguments,
                     )
                 )
 

@@ -137,3 +137,111 @@ class TestToolRegistryContract:
     def test_list_tools_returns_list(self):
         tools = registry.list_tools()
         assert isinstance(tools, list)
+
+    def test_execute_validates_required_inputs(self):
+        def _handler(path: str, content: str) -> str:
+            return f"[ok] {path}:{len(content)}"
+
+        registry.register(
+            name="contract_required_tool",
+            description="contract test required inputs",
+            parameters={
+                "path": {"type": "string", "description": "path"},
+                "content": {"type": "string", "description": "content"},
+            },
+            required=["path", "content"],
+            handler=_handler,
+        )
+
+        result = registry.execute("contract_required_tool", {})
+
+        assert isinstance(result, str)
+        assert result.startswith("[error]")
+        assert "缺少必填参数" in result
+        assert "path" in result
+        assert "content" in result
+
+    def test_execute_surfaces_parse_error_hint(self):
+        def _handler(path: str, content: str) -> str:
+            return f"[ok] {path}:{len(content)}"
+
+        registry.register(
+            name="contract_parse_error_tool",
+            description="contract test parse error",
+            parameters={
+                "path": {"type": "string", "description": "path"},
+                "content": {"type": "string", "description": "content"},
+            },
+            required=["path", "content"],
+            handler=_handler,
+        )
+
+        result = registry.execute(
+            "contract_parse_error_tool",
+            {
+                "_tool_parse_error": "arguments JSON 解析失败: Unterminated string",
+                "_tool_raw_arguments": '{"path":"x", "content":"oops"',
+            },
+        )
+
+        assert isinstance(result, str)
+        assert result.startswith("[error]")
+        assert "工具参数解析失败" in result
+        assert "raw_arguments" in result
+
+    def test_register_preserves_explicit_empty_required_list(self):
+        def _handler(name: str = "world") -> str:
+            return f"hello, {name}"
+
+        registry.register(
+            name="contract_optional_tool",
+            description="contract test optional parameter",
+            parameters={
+                "name": {"type": "string", "description": "name"},
+            },
+            required=[],
+            handler=_handler,
+        )
+
+        result = registry.execute("contract_optional_tool", {})
+
+        assert isinstance(result, str)
+        assert result == "hello, world"
+
+    def test_execute_rejects_non_object_inputs(self):
+        def _handler() -> str:
+            return "[ok]"
+
+        registry.register(
+            name="contract_noop_tool",
+            description="contract test non-object inputs",
+            parameters={},
+            required=[],
+            handler=_handler,
+        )
+
+        result = registry.execute("contract_noop_tool", None)
+
+        assert isinstance(result, str)
+        assert result.startswith("[error]")
+        assert "工具参数必须是 object" in result
+
+    def test_execute_keeps_unknown_parameter_error_visible(self):
+        def _handler(name: str = "world") -> str:
+            return f"hello, {name}"
+
+        registry.register(
+            name="contract_unknown_param_tool",
+            description="contract test unknown param visibility",
+            parameters={
+                "name": {"type": "string", "description": "name"},
+            },
+            required=[],
+            handler=_handler,
+        )
+
+        result = registry.execute("contract_unknown_param_tool", {"mod": "append"})
+
+        assert isinstance(result, str)
+        assert result.startswith("[error]")
+        assert "unexpected keyword" in result

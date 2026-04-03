@@ -90,3 +90,35 @@ def test_chat_parses_message_content_array_and_tool_args_dict():
     assert len(r.tool_calls) == 1
     assert r.tool_calls[0].name == "use_skill"
     assert r.tool_calls[0].inputs == {"name": "using-superpowers"}
+
+
+def test_chat_marks_tool_call_parse_error_when_arguments_invalid_json():
+    bad_args = '{"path": "snake-game.html", "content": "<html>"'
+    response = _Obj(
+        choices=[
+            _Obj(
+                message=_Obj(
+                    content="",
+                    tool_calls=[
+                        _Obj(
+                            id="call_bad",
+                            function=_Obj(
+                                name="write_file",
+                                arguments=bad_args,
+                            ),
+                        )
+                    ],
+                )
+            )
+        ]
+    )
+    p = _provider_with_resp(response)
+
+    r = p.chat(messages=[], system="sys", tools=[])
+    assert r.stop_reason == "tool_use"
+    assert len(r.tool_calls) == 1
+    assert r.tool_calls[0].name == "write_file"
+    assert r.tool_calls[0].inputs == {}
+    assert r.tool_calls[0].parse_error is not None
+    assert "JSON" in r.tool_calls[0].parse_error
+    assert r.tool_calls[0].raw_arguments == bad_args

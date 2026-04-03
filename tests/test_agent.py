@@ -426,6 +426,132 @@ def test_runtime_unknown_step_raises():
         runtime.run()
 
 
+def test_runtime_forwards_tool_parse_error_metadata():
+    class NoopProvider(BaseLLMProvider):
+        def chat(self, messages, system, tools) -> LLMResponse:
+            raise AssertionError("should not call provider.chat")
+
+        def format_tool_result(self, tool_call_id: str, content: str) -> dict:
+            return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
+
+        def tool_results_as_message(self, results: list[dict]) -> list[dict]:
+            return results
+
+    class RecordingRegistry:
+        def __init__(self):
+            self.calls: list[tuple[str, dict]] = []
+
+        def execute(self, name: str, inputs: dict) -> str:
+            self.calls.append((name, dict(inputs)))
+            return "[ok]"
+
+        def get_schemas(self) -> list[dict]:
+            return []
+
+    class NoopStore:
+        def save(self, session_id, messages, provider_type):
+            _ = (session_id, messages, provider_type)
+
+    registry = RecordingRegistry()
+
+    runtime = AgentRuntime(
+        provider=NoopProvider(),
+        settings=AgentSettings(),
+        ctx=Context(),
+        tool_registry=registry,
+        session_store=NoopStore(),
+        system="test-system",
+        run_ctx=RunContext(),
+        session_id=None,
+        provider_type="openai",
+    )
+
+    response = LLMResponse(
+        text="",
+        tool_calls=[
+            ToolCall(
+                id="call_1",
+                name="write_file",
+                inputs={},
+                parse_error="arguments JSON 解析失败: Unterminated string",
+                raw_arguments='{"path": "a", "content": "x"',
+            )
+        ],
+        stop_reason="tool_use",
+        assistant_message={"role": "assistant", "content": ""},
+    )
+
+    runtime.execute_tools(response)
+
+    assert len(registry.calls) == 1
+    called_name, called_inputs = registry.calls[0]
+    assert called_name == "write_file"
+    assert called_inputs["_tool_parse_error"].startswith("arguments JSON 解析失败")
+    assert called_inputs["_tool_raw_arguments"].startswith('{"path"')
+
+
+def test_runtime_handles_non_dict_tool_inputs():
+    class NoopProvider(BaseLLMProvider):
+        def chat(self, messages, system, tools) -> LLMResponse:
+            raise AssertionError("should not call provider.chat")
+
+        def format_tool_result(self, tool_call_id: str, content: str) -> dict:
+            return {"role": "tool", "tool_call_id": tool_call_id, "content": content}
+
+        def tool_results_as_message(self, results: list[dict]) -> list[dict]:
+            return results
+
+    class RecordingRegistry:
+        def __init__(self):
+            self.calls: list[tuple[str, dict]] = []
+
+        def execute(self, name: str, inputs: dict) -> str:
+            self.calls.append((name, dict(inputs)))
+            return "[ok]"
+
+        def get_schemas(self) -> list[dict]:
+            return []
+
+    class NoopStore:
+        def save(self, session_id, messages, provider_type):
+            _ = (session_id, messages, provider_type)
+
+    registry = RecordingRegistry()
+
+    runtime = AgentRuntime(
+        provider=NoopProvider(),
+        settings=AgentSettings(),
+        ctx=Context(),
+        tool_registry=registry,
+        session_store=NoopStore(),
+        system="test-system",
+        run_ctx=RunContext(),
+        session_id=None,
+        provider_type="openai",
+    )
+
+    response = LLMResponse(
+        text="",
+        tool_calls=[
+            ToolCall(
+                id="call_2",
+                name="write_file",
+                inputs=[("path", "a.txt")],
+            )
+        ],
+        stop_reason="tool_use",
+        assistant_message={"role": "assistant", "content": ""},
+    )
+
+    runtime.execute_tools(response)
+
+    assert len(registry.calls) == 1
+    called_name, called_inputs = registry.calls[0]
+    assert called_name == "write_file"
+    assert called_inputs["_tool_parse_error"].startswith("tool inputs 必须是 object")
+    assert called_inputs["_tool_raw_arguments"] == "[('path', 'a.txt')]"
+
+
 def test_system_prompt_contains_available_skills():
     from skills import discover_skills
 
