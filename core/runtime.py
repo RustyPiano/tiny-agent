@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from config import MAX_COMPACT_HISTORY_MESSAGES
 from core.context import Context
 from core.logging import RunContext, log_event
+from core.message_assembler import assemble_messages
 from core.policies import DefaultRuntimePolicy, RuntimePolicy, Step
 from core.react_protocol import ReactDecision, parse_react_json
 from llm.base import BaseLLMProvider, LLMResponse, ToolCall
@@ -50,11 +53,124 @@ class AgentRuntime:
         return self.policy.next_step(self.state.turn, self.settings.max_turns, response)
 
     def call_llm(self) -> LLMResponse:
+        messages = self.ctx.get()
+        current_task = self._latest_user_text(messages)
+        last_observation = self._latest_non_user_text(messages)
+        compacted_history = self._compact_history(messages)
+        dynamic_system = assemble_messages(
+            static_system_prompt=self.system,
+            memory_text="",
+            compacted_history=compacted_history,
+            last_observation=last_observation,
+            current_task=current_task,
+        )
         return self.provider.chat(
-            messages=self.ctx.get(),
-            system=self.system,
+            messages=messages,
+            system=dynamic_system,
             tools=self.tool_registry.get_schemas(),
         )
+
+    def _latest_user_text(self, messages: list[dict]) -> str:
+        for message in reversed(messages):
+            if message.get("role") == "user":
+                content = message.get("content", "")
+                if isinstance(content, str) and content.strip():
+                    return content
+        for message in reversed(messages):
+            if message.get("role") != "user":
+                continue
+            if self._is_synthetic_user_tool_result_message(message):
+                continue
+            fallback_text = self._message_text_for_prompt(message)
+            if fallback_text.strip():
+                return fallback_text
+        return ""
+
+    def _is_synthetic_user_tool_result_message(self, message: dict) -> bool:
+        if message.get("role") != "user":
+            return False
+
+        content = message.get("content")
+        if not isinstance(content, list) or not content:
+            return False
+
+        saw_tool_result = False
+        for block in content:
+            if not isinstance(block, dict):
+                return False
+            if block.get("type") != "tool_result":
+                return False
+            saw_tool_result = True
+        return saw_tool_result
+
+    def _latest_non_user_text(self, messages: list[dict]) -> str:
+        for message in reversed(messages):
+            if message.get("role") != "user":
+                return self._message_text_for_prompt(message)
+        return ""
+
+    def _message_text_for_prompt(self, message: dict) -> str:
+        content = message.get("content", "")
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, dict):
+            content_type = content.get("type")
+            if isinstance(content_type, str):
+                return f"[{content_type} payload]"
+            keys = ", ".join(sorted(str(k) for k in content.keys()))
+            return f"[structured payload: {{{keys}}}]"
+
+        if isinstance(content, list):
+            if not content:
+                return "[empty content blocks]"
+
+            summary_parts: list[str] = []
+            for block in content:
+                if isinstance(block, str):
+                    text = block.strip()
+                    if text:
+                        summary_parts.append(f"text({len(text)} chars)")
+                    continue
+                if isinstance(block, dict):
+                    block_type = block.get("type")
+                    if isinstance(block_type, str):
+                        if block_type == "tool_result":
+                            tool_use_id = block.get("tool_use_id")
+                            if isinstance(tool_use_id, str) and tool_use_id:
+                                summary_parts.append(f"tool_result:{tool_use_id}")
+                            else:
+                                summary_parts.append("tool_result")
+                        elif block_type == "tool_use":
+                            name = block.get("name")
+                            if isinstance(name, str) and name:
+                                summary_parts.append(f"tool_use:{name}")
+                            else:
+                                summary_parts.append("tool_use")
+                        else:
+                            summary_parts.append(block_type)
+                    else:
+                        keys = ", ".join(sorted(str(k) for k in block.keys()))
+                        summary_parts.append(f"block{{{keys}}}")
+                    continue
+                summary_parts.append(type(block).__name__)
+
+            if summary_parts:
+                return "[content blocks: " + ", ".join(summary_parts) + "]"
+            return "[content blocks]"
+
+        try:
+            return json.dumps(content, ensure_ascii=False, sort_keys=True)
+        except TypeError:
+            return f"[{type(content).__name__} content]"
+
+    def _compact_history(self, messages: list[dict]) -> str:
+        lines: list[str] = []
+        for message in messages[-MAX_COMPACT_HISTORY_MESSAGES:]:
+            role = message.get("role", "unknown")
+            text = self._message_text_for_prompt(message)
+            lines.append(f"{role}: {text}")
+        return "\n".join(lines)
 
     def parse_react_decision(self, raw: str) -> ReactDecision | None:
         if not isinstance(raw, str) or not raw.strip():
