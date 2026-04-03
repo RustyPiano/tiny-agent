@@ -14,7 +14,7 @@ from core.logging import RunContext, log_event
 from core.memory_store import MemoryStore
 from core.message_assembler import assemble_messages
 from core.policies import DefaultRuntimePolicy, RuntimePolicy, Step
-from core.react_protocol import ReactDecision, parse_react_json
+from core.react_protocol import ReactDecision, parse_react_json, parse_react_json_with_error
 from core.sandbox import sandbox_cwd
 from core.security import SecurityGuard
 from llm.base import BaseLLMProvider, LLMResponse, ToolCall
@@ -28,6 +28,7 @@ class TurnState:
     turn: int
     response: LLMResponse | None = None
     react_format_retries: int = 0
+    end_turn_react_parse_retries: int = 0
 
 
 REACT_FORMAT_MAX_RETRIES = 3
@@ -38,6 +39,10 @@ REACT_FORMAT_RETRY_OBSERVATION = (
 )
 REACT_FORMAT_RETRY_EXHAUSTED_PAYLOAD = (
     '{"thought":"format_retry_exhausted","action":"NONE","action_input":"NONE"}'
+)
+END_TURN_REACT_PARSE_MAX_RETRIES = 2
+END_TURN_REACT_PARSE_RETRY_EXHAUSTED_PAYLOAD = (
+    '{"thought":"end_turn_parse_retry_exhausted","action":"NONE","action_input":"NONE"}'
 )
 
 
@@ -254,6 +259,10 @@ class AgentRuntime:
         if not isinstance(raw, str) or not raw.strip():
             return None
 
+        decision, _ = self.parse_react_decision_with_error(raw)
+        return decision
+
+    def _allowed_react_actions(self) -> set[str]:
         allowed_actions: set[str] = set()
         get_schemas = getattr(self.tool_registry, "get_schemas", None)
         if callable(get_schemas):
@@ -270,10 +279,35 @@ class AgentRuntime:
             allowed_actions.update(name for name in list_tools() if isinstance(name, str) and name)
 
         allowed_actions.add("NONE")
-        try:
-            return parse_react_json(raw, allowed_actions)
-        except ValueError:
-            return None
+        return allowed_actions
+
+    def parse_react_decision_with_error(self, raw: str) -> tuple[ReactDecision | None, str | None]:
+        if not isinstance(raw, str) or not raw.strip():
+            return None, None
+
+        allowed_actions = self._allowed_react_actions()
+        return parse_react_json_with_error(raw, allowed_actions)
+
+    def _looks_like_react_json(self, raw: str) -> bool:
+        if not isinstance(raw, str):
+            return False
+        stripped = raw.strip()
+        if not stripped.startswith("{"):
+            return False
+        return (
+            '"thought"' in stripped
+            or '"action"' in stripped
+            or '"action_input"' in stripped
+        )
+
+    def _end_turn_parse_error_observation(self, parse_error: str) -> str:
+        return (
+            "Observation: ReAct output parse failed at end_turn. "
+            f"Error: {parse_error}. "
+            "Reply with strict JSON only, exact keys "
+            '{"thought","action","action_input"}, action must be allowed tool name or "NONE", '
+            'and action_input must be an object or the string "NONE".'
+        )
 
     def execute_tools(self, response: LLMResponse) -> list[dict]:
         results: list[dict] = []
@@ -427,14 +461,38 @@ class AgentRuntime:
                 return self.final_response_text()
             if step == Step.DONE:
                 current_response = self.state.response
-                if current_response is not None and self._should_execute_react_action(
-                    current_response
-                ):
-                    results = self.execute_tools(current_response)
-                    packaged = self.provider.tool_results_as_message(results)
-                    self.ctx.add_tool_results(packaged)
-                    self.state.response = None
-                    continue
+                if current_response is not None:
+                    react_decision, parse_error = self.parse_react_decision_with_error(
+                        current_response.text
+                    )
+                    if react_decision is not None and react_decision.action != "NONE":
+                        results = self.execute_tools(current_response)
+                        packaged = self.provider.tool_results_as_message(results)
+                        self.ctx.add_tool_results(packaged)
+                        self.state.end_turn_react_parse_retries = 0
+                        self.state.response = None
+                        continue
+                    if (
+                        react_decision is None
+                        and parse_error
+                        and self._looks_like_react_json(current_response.text)
+                    ):
+                        self.state.end_turn_react_parse_retries += 1
+                        if (
+                            self.state.end_turn_react_parse_retries
+                            > END_TURN_REACT_PARSE_MAX_RETRIES
+                        ):
+                            self.persist_session()
+                            log_event(
+                                "run_end",
+                                self.run_ctx,
+                                stop_reason="end_turn_react_parse_retry_exhausted",
+                            )
+                            return END_TURN_REACT_PARSE_RETRY_EXHAUSTED_PAYLOAD
+                        self.ctx.add_user(self._end_turn_parse_error_observation(parse_error))
+                        self.state.response = None
+                        continue
+                    self.state.end_turn_react_parse_retries = 0
                 self.persist_session()
                 log_event("run_end", self.run_ctx, stop_reason="end_turn")
                 return self.final_response_text()
