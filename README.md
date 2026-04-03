@@ -43,8 +43,8 @@ python main.py --provider openai --model gpt-4o
 # 使用本地模型 (Ollama)
 python main.py --provider openai --model qwen2.5:14b --base-url http://localhost:11434/v1
 
-# 预加载 skills（可选；通常依赖 available_skills + use_skill 按需加载）
-python main.py --skills coding,project_explorer
+# 预加载 skills（可选；skills 名称来自已发现目录）
+python main.py --skills code-review,safe-ops
 
 # 持久化会话
 python main.py --session my_project
@@ -92,13 +92,13 @@ agent-framework/
 
 - [如何新增 Tool](docs/how-to-add-tool.md)
 - [如何新增 Provider](docs/how-to-add-provider.md)
+- [如何新增 Skill](docs/how-to-add-skill.md)
 
 ## 扩展机制（PoC）
 
 框架会在启动时按约定目录尝试加载扩展模块：
 
 - `extensions/tools/*.py`
-- `extensions/skills/*.py`
 - `extensions/providers/*.py`
 
 扩展模块需要提供模块级 `register()` 合约函数，加载器会导入模块后调用该函数完成注册。
@@ -163,3 +163,10 @@ description: 代码实现与重构最佳实践
 2. 项目级：`<project>/.agents/skills`
 
 同名 skill 以项目级覆盖全局级（project > global）。
+
+## Skills 加载流程
+
+1. 启动时扫描全局目录与项目目录，读取 `SKILL.md` frontmatter 的 `name`/`description`。
+2. 自动把技能元数据注入 system prompt 的 `Available Skills`。
+3. 当模型需要技能完整内容时，调用 `use_skill(name)` 按需加载正文。
+4. 同名技能按项目级覆盖全局级。
