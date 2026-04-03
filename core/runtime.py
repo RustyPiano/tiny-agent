@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from core.context import Context
 from core.logging import RunContext, log_event
 from core.policies import DefaultRuntimePolicy, RuntimePolicy, Step
-from llm.base import BaseLLMProvider, LLMResponse
+from core.react_protocol import ReactDecision, parse_react_json
+from llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
 if TYPE_CHECKING:
     from config import AgentSettings
@@ -54,9 +56,52 @@ class AgentRuntime:
             tools=self.tool_registry.get_schemas(),
         )
 
+    def parse_react_decision(self, raw: str) -> ReactDecision | None:
+        if not isinstance(raw, str) or not raw.strip():
+            return None
+
+        allowed_actions: set[str] = set()
+        get_schemas = getattr(self.tool_registry, "get_schemas", None)
+        if callable(get_schemas):
+            schemas = get_schemas() or []
+            for schema in schemas:
+                if isinstance(schema, dict):
+                    schema_name = schema.get("name")
+                    if isinstance(schema_name, str) and schema_name:
+                        allowed_actions.add(schema_name)
+
+        # Optional backward-compatible fallback.
+        list_tools = getattr(self.tool_registry, "list_tools", None)
+        if callable(list_tools):
+            allowed_actions.update(name for name in list_tools() if isinstance(name, str) and name)
+
+        allowed_actions.add("NONE")
+        try:
+            return parse_react_json(raw, allowed_actions)
+        except ValueError:
+            return None
+
     def execute_tools(self, response: LLMResponse) -> list[dict]:
         results: list[dict] = []
-        for tc in response.tool_calls:
+        tool_calls = list(response.tool_calls)
+        # ReAct JSON fallback is only considered when tool_calls is empty.
+        if not tool_calls:
+            react_decision = self.parse_react_decision(response.text)
+            if react_decision and react_decision.action != "NONE":
+                react_inputs = (
+                    react_decision.action_input
+                    if isinstance(react_decision.action_input, dict)
+                    else {}
+                )
+                tool_calls = [
+                    ToolCall(
+                        id=f"react_{uuid4().hex}",
+                        name=react_decision.action,
+                        inputs=react_inputs,
+                    )
+                ]
+
+        for tc in tool_calls:
             inputs_obj = tc.inputs if isinstance(tc.inputs, dict) else {}
             execute_inputs = dict(inputs_obj)
             log_inputs = dict(inputs_obj)
