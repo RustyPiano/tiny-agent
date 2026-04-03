@@ -1,6 +1,8 @@
 # tests/test_agent.py
 """Agent 主循环测试，使用 mock provider"""
 
+from pathlib import Path
+
 import pytest
 
 from config import AgentSettings
@@ -8,6 +10,7 @@ from core.agent import run
 from core.context import Context
 from core.logging import RunContext
 from core.policies import RuntimePolicy, Step
+from core.prompt_builder import build_system_prompt
 from core.runtime import AgentRuntime
 from llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
@@ -421,3 +424,14 @@ def test_runtime_unknown_step_raises():
 
     with pytest.raises(RuntimeError, match="Unhandled runtime step"):
         runtime.run()
+
+
+def test_system_prompt_contains_available_skills():
+    from skills import discover_skills
+
+    discover_skills(
+        project_dir=Path("/nonexistent/project"),
+        global_dir=Path("/nonexistent/global"),
+    )
+    prompt = build_system_prompt()
+    assert "## Available Skills" not in prompt

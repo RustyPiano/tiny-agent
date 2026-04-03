@@ -43,7 +43,7 @@ python main.py --provider openai --model gpt-4o
 # 使用本地模型 (Ollama)
 python main.py --provider openai --model qwen2.5:14b --base-url http://localhost:11434/v1
 
-# 启用 skills
+# 预加载 skills（可选；通常依赖 available_skills + use_skill 按需加载）
 python main.py --skills coding,project_explorer
 
 # 持久化会话
@@ -71,9 +71,9 @@ agent-framework/
 │   ├── registry.py         # 工具注册中心
 │   ├── bash_tool.py        # Shell 命令执行
 │   └── file_tools.py       # 文件读写
-├── skills/                 # Skill 系统（动态 prompt 注入）
-│   ├── registry.py         # Skill 注册中心
-│   └── builtin/            # 内置 skills
+├── skills/                 # Skill 系统（动态发现 + prompt 注入）
+│   ├── registry.py         # Skill 发现与注册中心
+│   └── __init__.py
 ├── sessions/               # 会话持久化
 │   ├── store.py            # 会话存储
 │   └── migrations.py       # 版本迁移
@@ -136,3 +136,30 @@ make clean
 | `AGENT_MODEL` | 模型名称 | `claude-opus-4-6` |
 | `AGENT_BASE_URL` | 自定义 API 地址 | - |
 | `AGENT_WORKSPACE` | 工作空间根目录 | 当前目录 |
+| `AGENT_PROJECT_SKILLS_DIR` | 项目级 skills 目录 | `<workspace>/.agents/skills` |
+| `AGENT_GLOBAL_SKILLS_DIR` | 全局 skills 目录 | `~/.agents/skills` |
+
+## Skills 目录规范
+
+Skill 采用主流目录布局：
+
+`<skills_root>/<skill_name>/SKILL.md`
+
+`SKILL.md` 顶部使用 frontmatter：
+
+```md
+---
+name: coding
+description: 代码实现与重构最佳实践
+---
+<skill 的完整指令正文>
+```
+
+当前解析器是轻量实现，仅支持简单的 `key: value` 行（例如 `name`、`description`），不支持嵌套 YAML 结构或复杂语法。
+
+启动时会自动发现两级 skills 并注入 metadata 到 system prompt 的 `Available Skills` 段落：
+
+1. 全局级：`~/.agents/skills`
+2. 项目级：`<project>/.agents/skills`
+
+同名 skill 以项目级覆盖全局级（project > global）。

@@ -1,6 +1,10 @@
 # tests/test_tools.py
+from pathlib import Path
+
+from skills import discover_skills
 from tools.bash_tool import run_bash
 from tools.file_tools import read_file, write_file
+from tools.skill_tool import use_skill
 
 
 def test_write_and_read(tmp_path):
@@ -44,3 +48,20 @@ def test_bash_timeout():
 def test_bash_blocked():
     result = run_bash("rm -rf /")
     assert "[blocked]" in result
+
+
+def test_use_skill_returns_prompt_text(tmp_path):
+    project_skills = tmp_path / ".agents" / "skills"
+    (project_skills / "coding").mkdir(parents=True, exist_ok=True)
+    (project_skills / "coding" / "SKILL.md").write_text(
+        "---\nname: coding\ndescription: coding skill\n---\n编码规范",
+        encoding="utf-8",
+    )
+    discover_skills(project_dir=project_skills, global_dir=Path("/nonexistent"))
+    result = use_skill("coding")
+    assert "编码规范" in result
+
+
+def test_use_skill_unknown_returns_error():
+    result = use_skill("unknown_skill")
+    assert "[error]" in result

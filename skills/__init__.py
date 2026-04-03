@@ -1,11 +1,19 @@
-# skills/__init__.py
-import pathlib
+from skills.registry import (
+    clear_skills,
+    discover_skills,
+    get_skill_metadata,
+    get_skill_prompt,
+    list_skills,
+    load,
+    render_available_skills,
+)
 
-from skills.registry import register_from_file
-
-_BUILTIN = pathlib.Path(__file__).parent / "builtin"
-
-
-def load_builtin_skills() -> None:
-    for md_file in _BUILTIN.glob("*.md"):
-        register_from_file(md_file.stem, str(md_file))
+__all__ = [
+    "clear_skills",
+    "discover_skills",
+    "get_skill_metadata",
+    "get_skill_prompt",
+    "list_skills",
+    "load",
+    "render_available_skills",
+]

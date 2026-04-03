@@ -17,15 +17,60 @@ from core.agent import run
 from core.logging import RunContext, log_event, setup_logging
 from extensions.loader import load_extensions
 from llm.factory import create_provider
-from skills import load_builtin_skills
+from skills import discover_skills
 from tools.bash_tool import register_bash_tool
 from tools.file_tools import register_file_tools
+from tools.skill_tool import register_skill_tool
 
 
-def bootstrap() -> None:
-    load_builtin_skills()
+def bootstrap(settings: AgentSettings) -> None:
+    try:
+        summary = discover_skills(
+            project_dir=settings.project_skills_dir,
+            global_dir=settings.global_skills_dir,
+        )
+    except Exception as e:
+        summary = {
+            "discovered": 0,
+            "loaded": 0,
+            "overridden": 0,
+            "failed": 1,
+            "total": 0,
+            "failure_details": [
+                {
+                    "path": f"{settings.global_skills_dir} | {settings.project_skills_dir}",
+                    "reason": "discover_exception",
+                }
+            ],
+        }
+        log_event(
+            "skills_discovery_error",
+            RunContext(),
+            project_dir=str(settings.project_skills_dir),
+            global_dir=str(settings.global_skills_dir),
+            error=str(e),
+        )
+
+    event_fields = {
+        "project_dir": str(settings.project_skills_dir),
+        "global_dir": str(settings.global_skills_dir),
+        "discovered": summary["discovered"],
+        "loaded": summary["loaded"],
+        "overridden": summary["overridden"],
+        "failed": summary["failed"],
+        "total": summary["total"],
+    }
+    if summary.get("failure_details"):
+        event_fields["failure_details"] = summary["failure_details"]
+
+    log_event(
+        "skills_discovered",
+        RunContext(),
+        **event_fields,
+    )
     register_file_tools()
     register_bash_tool()
+    register_skill_tool()
     try:
         result = load_extensions()
         for ext in result["loaded"]:
@@ -67,8 +112,6 @@ def main() -> None:
     # 配置日志
     setup_logging(level=args.log_level, fmt=args.log_format)
 
-    bootstrap()
-
     # 从环境变量构建，再用命令行参数覆盖
     settings = AgentSettings.from_env()
     if args.provider:
@@ -84,6 +127,8 @@ def main() -> None:
         for e in errors:
             log_event("config_error", RunContext(), error=e)
         sys.exit(1)
+
+    bootstrap(settings)
 
     provider = create_provider(settings.to_provider_config())
 

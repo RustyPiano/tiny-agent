@@ -11,6 +11,8 @@ SESSIONS_DIR = "sessions"
 
 # 工作空间根目录（向后兼容，测试和 tools 仍在引用）
 WORKSPACE_ROOT = pathlib.Path(os.getenv("AGENT_WORKSPACE", os.getcwd())).resolve()
+PROJECT_SKILLS_DIR = WORKSPACE_ROOT / ".agents" / "skills"
+GLOBAL_SKILLS_DIR = pathlib.Path.home() / ".agents" / "skills"
 
 BASE_SYSTEM_PROMPT = """你是一个能力强大的本地 Agent。
 你可以读写文件、执行 bash 命令来完成用户交代的任务。
@@ -27,6 +29,12 @@ class AgentSettings:
     base_url: str | None = None
     api_key: str | None = None
     workspace_root: pathlib.Path = field(default_factory=lambda: WORKSPACE_ROOT)
+    project_skills_dir: pathlib.Path = field(
+        default_factory=lambda: WORKSPACE_ROOT / ".agents" / "skills"
+    )
+    global_skills_dir: pathlib.Path = field(
+        default_factory=lambda: pathlib.Path.home() / ".agents" / "skills"
+    )
     sessions_dir: pathlib.Path = field(default_factory=lambda: pathlib.Path(SESSIONS_DIR))
     max_tokens: int = MAX_TOKENS
     max_turns: int = MAX_TURNS
@@ -45,19 +53,34 @@ class AgentSettings:
             errors.append(f"max_turns 必须 >= 1, 当前: {self.max_turns}")
         if not self.workspace_root.exists():
             errors.append(f"workspace_root 不存在: {self.workspace_root}")
+        if self.project_skills_dir.exists() and not self.project_skills_dir.is_dir():
+            errors.append(f"project_skills_dir 不是目录: {self.project_skills_dir}")
+        if self.global_skills_dir.exists() and not self.global_skills_dir.is_dir():
+            errors.append(f"global_skills_dir 不是目录: {self.global_skills_dir}")
         return errors
 
     @classmethod
     def from_env(cls) -> "AgentSettings":
         """从环境变量构建"""
+        workspace_root = pathlib.Path(os.getenv("AGENT_WORKSPACE", str(WORKSPACE_ROOT))).resolve()
+        project_default = workspace_root / ".agents" / "skills"
+        global_default = pathlib.Path.home() / ".agents" / "skills"
         return cls(
             provider_type=os.getenv("AGENT_PROVIDER", cls.provider_type),
             model=os.getenv("AGENT_MODEL", cls.model),
             base_url=os.getenv("AGENT_BASE_URL"),
             api_key=os.getenv("AGENT_API_KEY"),
-            workspace_root=pathlib.Path(
-                os.getenv("AGENT_WORKSPACE", str(WORKSPACE_ROOT))
-            ).resolve(),
+            workspace_root=workspace_root,
+            project_skills_dir=pathlib.Path(
+                os.getenv("AGENT_PROJECT_SKILLS_DIR", str(project_default))
+            )
+            .expanduser()
+            .resolve(),
+            global_skills_dir=pathlib.Path(
+                os.getenv("AGENT_GLOBAL_SKILLS_DIR", str(global_default))
+            )
+            .expanduser()
+            .resolve(),
         )
 
     def to_provider_config(self) -> dict:
