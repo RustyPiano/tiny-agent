@@ -78,6 +78,8 @@ class AgentRuntime:
         self.state = TurnState(turn=0)
         self._last_tool_statuses: list[str] = []
         self._last_executed_tools_count: int = 0
+        self._finish_requested: bool = False
+        self._finish_response: str = ""
         allowed_tools: set[str] = set()
         if tool_registry is not None:
             list_tools = getattr(tool_registry, "list_tools", None)
@@ -312,6 +314,20 @@ class AgentRuntime:
             'and action_input must be an object or the string "NONE".'
         )
 
+    def _parse_finish_output(self, tc, output_text, parse_error) -> dict | None:
+        if parse_error:
+            return None
+        try:
+            parsed = json.loads(output_text)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        resp_text = parsed.get("response", "")
+        if not isinstance(resp_text, str) or not resp_text:
+            return None
+        return parsed
+
     def execute_tools(self, response: LLMResponse) -> list[dict]:
         results: list[dict] = []
         tool_statuses: list[str] = []
@@ -386,6 +402,16 @@ class AgentRuntime:
                 tool_statuses.append(f"{tc.name}:ok")
             results.append(self.provider.format_tool_result(tc.id, output))
             output_text = str(output)
+            if (
+                tc.name == "finish"
+                and not output_text.startswith("[error]")
+                and not output_text.startswith("[tool_error]")
+            ):
+                parsed = self._parse_finish_output(tc, output_text, parse_error)
+                if parsed is not None:
+                    resp_text = parsed.get("response", "")
+                    self._finish_requested = True
+                    self._finish_response = resp_text
             log_event(
                 "tool_result",
                 self.run_ctx,
@@ -437,6 +463,8 @@ class AgentRuntime:
         return text or "[无文本输出]"
 
     def run(self) -> str:
+        self._finish_requested = False
+        self._finish_response = ""
         while True:
             step = self.next_step(self.state.response)
             if step == Step.MAX_TURNS:
@@ -481,6 +509,10 @@ class AgentRuntime:
                     continue
 
                 results = self.execute_tools(current_response)
+                if self._finish_requested:
+                    self.persist_session()
+                    log_event("run_end", self.run_ctx, stop_reason="finish")
+                    return self._finish_response
                 self.state.react_format_retries = 0
                 packaged = self.provider.tool_results_as_message(results)
                 self.ctx.add_tool_results(packaged)
