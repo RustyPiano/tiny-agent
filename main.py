@@ -20,7 +20,11 @@ from llm.factory import create_provider
 from skills import discover_skills
 from tools.bash_tool import register_bash_tool
 from tools.file_tools import register_file_tools
+from tools.finish_tool import register_finish_tool
+from tools.grep_tool import register_grep_tool
+from tools.list_dir_tool import register_list_dir_tool
 from tools.skill_tool import register_skill_tool
+from tools.summarize_tool import register_summarize_tool
 
 
 def bootstrap(settings: AgentSettings) -> None:
@@ -71,6 +75,10 @@ def bootstrap(settings: AgentSettings) -> None:
     register_file_tools()
     register_bash_tool()
     register_skill_tool()
+    register_summarize_tool()
+    register_finish_tool()
+    register_list_dir_tool()
+    register_grep_tool()
     try:
         result = load_extensions()
         for ext in result["loaded"]:
