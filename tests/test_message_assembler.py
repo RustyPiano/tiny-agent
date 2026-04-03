@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import config
 from config import MAX_COMPACT_HISTORY_MESSAGES, SYSTEM_PROMPT_DYNAMIC_BOUNDARY
 from core.context import Context
 from core.message_assembler import assemble_messages
@@ -145,7 +148,10 @@ def test_runtime_prompt_uses_fallback_markers_for_empty_fields():
 
 def test_runtime_compact_history_is_deterministic_and_summarized():
     messages = [
-        {"role": "assistant", "content": [{"type": "tool_use", "name": "read_file", "id": "a", "input": {}}]},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "name": "read_file", "id": "a", "input": {}}],
+        },
         {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "a", "content": "ok"}]},
         {"role": "assistant", "content": {"z": 1, "a": 2}},
     ]
@@ -160,3 +166,56 @@ def test_runtime_compact_history_is_deterministic_and_summarized():
     assert first == second
     assert len(first.splitlines()) == MAX_COMPACT_HISTORY_MESSAGES
     assert "{'type':" not in first
+
+
+def test_runtime_loads_memory_md_from_workspace_root(tmp_path: Path, monkeypatch):
+    memory_path = tmp_path / "MEMORY.md"
+    memory_path.write_text("project memory line", encoding="utf-8")
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", tmp_path)
+
+    runtime, provider = _build_runtime(messages=[{"role": "user", "content": "hello"}])
+
+    runtime.call_llm()
+
+    assert "## Current MEMORY\nproject memory line" in provider.last_system
+
+
+def test_runtime_prefers_settings_workspace_memory_before_global(tmp_path: Path, monkeypatch):
+    settings_root = tmp_path / "settings-root"
+    global_root = tmp_path / "global-root"
+    settings_root.mkdir(parents=True)
+    global_root.mkdir(parents=True)
+    (settings_root / "MEMORY.md").write_text("settings memory", encoding="utf-8")
+    (global_root / "MEMORY.md").write_text("global memory", encoding="utf-8")
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", global_root)
+
+    provider = _CaptureProvider()
+    runtime = AgentRuntime(
+        provider=provider,
+        settings=type("S", (), {"max_turns": 20, "workspace_root": settings_root})(),
+        ctx=Context(initial_messages=[{"role": "user", "content": "hello"}]),
+        tool_registry=_NoopRegistry(),
+        session_store=_NoopStore(),
+        system="STATIC-SYSTEM",
+        run_ctx=type("R", (), {"turn": 0})(),
+        session_id=None,
+        provider_type="anthropic",
+    )
+
+    runtime.call_llm()
+
+    assert "## Current MEMORY\nsettings memory" in provider.last_system
+
+
+def test_runtime_uses_history_compactor_module_output_in_prompt(monkeypatch):
+    runtime, provider = _build_runtime(messages=[{"role": "user", "content": "hello"}])
+
+    monkeypatch.setattr(config, "CONTEXT_SOFT_LIMIT_TOKENS", 1)
+    monkeypatch.setattr(
+        "core.runtime.compact_history",
+        lambda history, max_records, summarize_fn: ["module-compact-line"],
+    )
+
+    runtime.call_llm()
+
+    assert "## Compacted History\nmodule-compact-line" in provider.last_system

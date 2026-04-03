@@ -24,8 +24,7 @@ _BLOCKED_PATTERNS = [
 _BLOCKED_TOKENS = ["sudo", "curl", "wget"]
 
 _BLOCKED_TOKEN_PATTERNS = [
-    (token, re.compile(rf"(^|[;&|\s]){token}(\s|$)", re.IGNORECASE))
-    for token in _BLOCKED_TOKENS
+    (token, re.compile(rf"(^|[;&|\s]){token}(\s|$)", re.IGNORECASE)) for token in _BLOCKED_TOKENS
 ]
 
 # 使用正则匹配 rm -rf 的各种变体
@@ -89,16 +88,13 @@ def run_bash(command: str, timeout: int = 30, workdir: str | None = None) -> str
     if block_reason:
         return f"[blocked] 命令被拒绝: {block_reason}\n原始命令: {command}"
 
-    argv = _tokenize_command(command)
-    if argv is None:
-        return f"[error] 命令解析失败，可能包含不受支持的 shell 语法: {command}"
-    if not argv:
+    if not command.strip():
         return "[error] 空命令，未执行"
 
     try:
         result = subprocess.run(
-            argv,
-            shell=False,
+            command,
+            shell=True,
             capture_output=True,
             text=True,
             timeout=timeout,

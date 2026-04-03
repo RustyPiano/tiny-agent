@@ -1,10 +1,10 @@
 import pytest
 
 from config import AgentSettings
-from core.react_protocol import ReactDecision, parse_react_json
-from core.runtime import AgentRuntime
 from core.context import Context
 from core.logging import RunContext
+from core.react_protocol import ReactDecision, parse_react_json
+from core.runtime import AgentRuntime
 from llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
 
@@ -68,7 +68,10 @@ def test_parse_react_json_valid_payload() -> None:
 
 def test_parse_react_json_rejects_non_json_text() -> None:
     with pytest.raises(ValueError, match="must be valid JSON"):
-        parse_react_json("I will now run a command", allowed_actions={"run_bash", "NONE"})
+        parse_react_json(
+            "I will now run a command",
+            allowed_actions={"run_bash", "NONE"},
+        )
 
 
 def test_parse_react_json_rejects_missing_required_fields() -> None:
@@ -93,10 +96,7 @@ def test_parse_react_json_rejects_invalid_action_input_type() -> None:
 
 
 def test_parse_react_json_rejects_extra_keys() -> None:
-    raw = (
-        '{"thought":"ok","action":"run_bash",'
-        '"action_input":{"command":"echo hi"},"extra":"x"}'
-    )
+    raw = '{"thought":"ok","action":"run_bash","action_input":{"command":"echo hi"},"extra":"x"}'
 
     with pytest.raises(ValueError, match="keys"):
         parse_react_json(raw, allowed_actions={"run_bash", "NONE"})
@@ -107,7 +107,7 @@ def test_runtime_execute_tools_uses_react_json_parser_path_without_list_tools() 
     runtime = make_runtime(registry)
 
     response = LLMResponse(
-        text='{"thought":"need shell","action":"run_bash","action_input":{"command":"echo hi"}}',
+        text=('{"thought":"need shell","action":"run_bash","action_input":{"command":"echo hi"}}'),
         tool_calls=[],
         stop_reason="tool_use",
         assistant_message={"role": "assistant", "content": ""},
@@ -140,9 +140,16 @@ def test_runtime_execute_tools_ignores_react_json_when_tool_calls_present() -> N
     runtime = make_runtime(registry)
 
     response = LLMResponse(
-        text='{"thought":"try override","action":"run_bash","action_input":{"command":"echo from-json"}}',
+        text=(
+            '{"thought":"try override","action":"run_bash",'
+            '"action_input":{"command":"echo from-json"}}'
+        ),
         tool_calls=[
-            ToolCall(id="call_1", name="run_bash", inputs={"command": "echo from-tool-call"})
+            ToolCall(
+                id="call_1",
+                name="run_bash",
+                inputs={"command": "echo from-tool-call"},
+            )
         ],
         stop_reason="tool_use",
         assistant_message={"role": "assistant", "content": ""},

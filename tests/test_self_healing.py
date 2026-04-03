@@ -95,7 +95,9 @@ def test_self_healing_recovers_after_none_action_then_executes_valid_tool() -> N
         stop_reason="tool_use",
         assistant_message={
             "role": "assistant",
-            "content": '{"thought":"need shell","action":"run_bash","action_input":{"command":"echo hi"}}',
+            "content": (
+                '{"thought":"need shell","action":"run_bash","action_input":{"command":"echo hi"}}'
+            ),
         },
     )
     final = LLMResponse(
@@ -113,4 +115,34 @@ def test_self_healing_recovers_after_none_action_then_executes_valid_tool() -> N
 
     assert result == "done"
     assert provider._call_index == 3
+    assert registry.calls == [("run_bash", {"command": "echo hi"})]
+
+
+def test_end_turn_with_valid_react_action_executes_tool_then_continues() -> None:
+    end_turn_action = LLMResponse(
+        text='{"thought":"need shell","action":"run_bash","action_input":{"command":"echo hi"}}',
+        tool_calls=[],
+        stop_reason="end_turn",
+        assistant_message={
+            "role": "assistant",
+            "content": (
+                '{"thought":"need shell","action":"run_bash","action_input":{"command":"echo hi"}}'
+            ),
+        },
+    )
+    final = LLMResponse(
+        text="done",
+        tool_calls=[],
+        stop_reason="end_turn",
+        assistant_message={"role": "assistant", "content": "done"},
+    )
+
+    registry = RecordingRegistry()
+    provider = SequenceProvider([end_turn_action, final])
+    runtime = make_runtime(provider, registry)
+
+    result = runtime.run()
+
+    assert result == "done"
+    assert provider._call_index == 2
     assert registry.calls == [("run_bash", {"command": "echo hi"})]

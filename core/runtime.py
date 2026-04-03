@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import config
 from core.context import Context
 from core.context_budget import estimate_tokens, should_compact
+from core.history_compactor import compact_history
 from core.logging import RunContext, log_event
+from core.memory_store import MemoryStore
 from core.message_assembler import assemble_messages
 from core.policies import DefaultRuntimePolicy, RuntimePolicy, Step
 from core.react_protocol import ReactDecision, parse_react_json
@@ -67,7 +70,9 @@ class AgentRuntime:
         if tool_registry is not None:
             list_tools = getattr(tool_registry, "list_tools", None)
             if callable(list_tools):
-                allowed_tools.update(name for name in list_tools() if isinstance(name, str) and name)
+                allowed_tools.update(
+                    name for name in list_tools() if isinstance(name, str) and name
+                )
             get_schemas = getattr(tool_registry, "get_schemas", None)
             if callable(get_schemas):
                 schemas = get_schemas() or []
@@ -86,12 +91,13 @@ class AgentRuntime:
         current_task = self._latest_user_text(messages)
         last_observation = self._latest_non_user_text(messages)
         estimated_tokens = self._estimate_context_tokens(messages)
+        memory_text = self._load_memory_text()
         compacted_history = ""
         if should_compact(estimated_tokens, config.CONTEXT_SOFT_LIMIT_TOKENS):
             compacted_history = self._compact_history(messages)
         dynamic_system = assemble_messages(
             static_system_prompt=self.system,
-            memory_text="",
+            memory_text=memory_text,
             compacted_history=compacted_history,
             last_observation=last_observation,
             current_task=current_task,
@@ -214,11 +220,35 @@ class AgentRuntime:
 
     def _compact_history(self, messages: list[dict]) -> str:
         lines: list[str] = []
-        for message in messages[-config.MAX_COMPACT_HISTORY_MESSAGES:]:
+        for message in messages[-config.MAX_COMPACT_HISTORY_MESSAGES :]:
             role = message.get("role", "unknown")
             text = self._message_text_for_prompt(message)
             lines.append(f"{role}: {text}")
-        return "\n".join(lines)
+        compacted = compact_history(
+            history=lines,
+            max_records=11,
+            summarize_fn=lambda records: "\n".join(records),
+        )
+        return "\n".join(compacted)
+
+    def _load_memory_text(self) -> str:
+        candidates: list[Path] = []
+        settings_root = getattr(self.settings, "workspace_root", None)
+        if isinstance(settings_root, Path):
+            settings_candidate = settings_root / "MEMORY.md"
+            candidates.append(settings_candidate)
+        global_candidate = config.WORKSPACE_ROOT / "MEMORY.md"
+        if global_candidate not in candidates:
+            candidates.append(global_candidate)
+
+        for candidate in candidates:
+            try:
+                text = MemoryStore(path=candidate).load_text()
+            except Exception:
+                continue
+            if text:
+                return text
+        return ""
 
     def parse_react_decision(self, raw: str) -> ReactDecision | None:
         if not isinstance(raw, str) or not raw.strip():
@@ -274,16 +304,19 @@ class AgentRuntime:
             if not allowed:
                 blocked_output = f"[blocked] {reason}"
                 results.append(self.provider.format_tool_result(tc.id, blocked_output))
-                log_event("tool_result", self.run_ctx, tool=tc.name, output_preview=blocked_output)
+                log_event(
+                    "tool_result",
+                    self.run_ctx,
+                    tool=tc.name,
+                    output_preview=blocked_output,
+                )
                 continue
 
             parse_error = tc.parse_error
             raw_arguments = tc.raw_arguments
             if not isinstance(tc.inputs, dict):
                 parse_error = (
-                    parse_error
-                    or "tool inputs 必须是 object，"
-                    f"实际: {type(tc.inputs).__name__}"
+                    parse_error or f"tool inputs 必须是 object，实际: {type(tc.inputs).__name__}"
                 )
                 if raw_arguments is None:
                     raw_arguments = str(tc.inputs)
@@ -309,7 +342,12 @@ class AgentRuntime:
                 output = f"[tool_error] {type(exc).__name__}: {exc}"
             results.append(self.provider.format_tool_result(tc.id, output))
             output_text = str(output)
-            log_event("tool_result", self.run_ctx, tool=tc.name, output_preview=output_text[:120])
+            log_event(
+                "tool_result",
+                self.run_ctx,
+                tool=tc.name,
+                output_preview=output_text[:120],
+            )
         return results
 
     def _should_retry_react_format(self, response: LLMResponse) -> bool:
@@ -321,6 +359,14 @@ class AgentRuntime:
         if decision is None:
             return True
         return decision.action == "NONE"
+
+    def _should_execute_react_action(self, response: LLMResponse) -> bool:
+        if response.tool_calls:
+            return False
+        decision = self.parse_react_decision(response.text)
+        if decision is None:
+            return False
+        return decision.action != "NONE"
 
     def persist_session(self) -> None:
         if self.session_id:
@@ -358,7 +404,11 @@ class AgentRuntime:
                     self.state.react_format_retries += 1
                     if self.state.react_format_retries > REACT_FORMAT_MAX_RETRIES:
                         self.persist_session()
-                        log_event("run_end", self.run_ctx, stop_reason="react_format_retry_exhausted")
+                        log_event(
+                            "run_end",
+                            self.run_ctx,
+                            stop_reason="react_format_retry_exhausted",
+                        )
                         return REACT_FORMAT_RETRY_EXHAUSTED_PAYLOAD
                     self.ctx.add_user(REACT_FORMAT_RETRY_OBSERVATION)
                     self.state.response = None
@@ -376,6 +426,15 @@ class AgentRuntime:
                 log_event("run_end", self.run_ctx, stop_reason=stop_reason)
                 return self.final_response_text()
             if step == Step.DONE:
+                current_response = self.state.response
+                if current_response is not None and self._should_execute_react_action(
+                    current_response
+                ):
+                    results = self.execute_tools(current_response)
+                    packaged = self.provider.tool_results_as_message(results)
+                    self.ctx.add_tool_results(packaged)
+                    self.state.response = None
+                    continue
                 self.persist_session()
                 log_event("run_end", self.run_ctx, stop_reason="end_turn")
                 return self.final_response_text()

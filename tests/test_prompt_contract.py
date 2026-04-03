@@ -52,9 +52,7 @@ def test_tool_whitelist_section_includes_complete_expected_actions() -> None:
         "NONE",
     }
     listed_actions = {
-        line.strip()[2:]
-        for line in section.splitlines()
-        if line.strip().startswith("- ")
+        line.strip()[2:] for line in section.splitlines() if line.strip().startswith("- ")
     }
     assert expected_actions == listed_actions
 

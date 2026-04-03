@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 
-def compact_history(history: list[str], max_records: int, summarize_fn: Callable[[list[str]], str]) -> list[str]:
+def compact_history(
+    history: list[str],
+    max_records: int,
+    summarize_fn: Callable[[list[str]], str],
+) -> list[str]:
     if max_records < 11:
         raise ValueError("max_records must be >= 11 for summary + latest 10 policy")
 

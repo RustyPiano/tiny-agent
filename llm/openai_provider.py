@@ -205,7 +205,7 @@ def _build_tool_call(call_id: str, name: str, args_payload) -> ToolCall:
     else:
         inputs = {}
         parse_error = parse_error or (
-            "arguments JSON 必须是 object，" f"实际: {type(parsed_inputs).__name__}"
+            f"arguments JSON 必须是 object，实际: {type(parsed_inputs).__name__}"
         )
 
     return ToolCall(

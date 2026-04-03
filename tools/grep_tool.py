@@ -36,11 +36,7 @@ def grep(pattern: str, path: str) -> str:
         files = []
         for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
             dir_path = pathlib.Path(dirpath)
-            dirnames[:] = [
-                name
-                for name in sorted(dirnames)
-                if not (dir_path / name).is_symlink()
-            ]
+            dirnames[:] = [name for name in sorted(dirnames) if not (dir_path / name).is_symlink()]
             for name in sorted(filenames):
                 files.append(dir_path / name)
 

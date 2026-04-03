@@ -122,10 +122,7 @@ def test_chat_marks_tool_call_parse_error_when_arguments_invalid_json():
     assert r.tool_calls[0].parse_error is not None
     assert "JSON" in r.tool_calls[0].parse_error
     assert r.tool_calls[0].raw_arguments == bad_args
-    assert (
-        r.assistant_message["tool_calls"][0]["function"]["arguments"]
-        == bad_args
-    )
+    assert r.assistant_message["tool_calls"][0]["function"]["arguments"] == bad_args
 
 
 def test_chat_parses_legacy_function_call_when_tool_calls_empty():
@@ -166,7 +163,12 @@ def test_chat_uses_max_completion_tokens_for_official_openai_endpoint():
     p.model = "gpt-4o-mini"
     p._use_max_completion_tokens = True
     p.client = type(
-        "Client", (), {"base_url": "https://api.openai.com/v1", "chat": type("Chat", (), {"completions": _CaptureCompletions()})()}
+        "Client",
+        (),
+        {
+            "base_url": "https://api.openai.com/v1",
+            "chat": type("Chat", (), {"completions": _CaptureCompletions()})(),
+        },
     )()
 
     r = p.chat(messages=[], system="sys", tools=[])
@@ -189,7 +191,12 @@ def test_chat_uses_max_tokens_for_compat_endpoints():
     p.model = "qwen2.5:14b"
     p._use_max_completion_tokens = False
     p.client = type(
-        "Client", (), {"base_url": "http://localhost:11434/v1", "chat": type("Chat", (), {"completions": _CaptureCompletions()})()}
+        "Client",
+        (),
+        {
+            "base_url": "http://localhost:11434/v1",
+            "chat": type("Chat", (), {"completions": _CaptureCompletions()})(),
+        },
     )()
 
     r = p.chat(messages=[], system="sys", tools=[])

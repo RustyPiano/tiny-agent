@@ -56,6 +56,12 @@ def test_bash_echo():
     assert "hello" in run_bash("echo hello")
 
 
+def test_bash_supports_shell_operators():
+    result = run_bash("echo one && echo two")
+    assert "one" in result
+    assert "two" in result
+
+
 def test_bash_stderr():
     result = run_bash("ls /nonexistent_path_xyz")
     assert "[stderr]" in result or "No such" in result
