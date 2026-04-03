@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
-from config import MAX_COMPACT_HISTORY_MESSAGES
+import config
 from core.context import Context
+from core.context_budget import estimate_tokens, should_compact
 from core.logging import RunContext, log_event
 from core.message_assembler import assemble_messages
 from core.policies import DefaultRuntimePolicy, RuntimePolicy, Step
@@ -72,7 +73,10 @@ class AgentRuntime:
         messages = self.ctx.get()
         current_task = self._latest_user_text(messages)
         last_observation = self._latest_non_user_text(messages)
-        compacted_history = self._compact_history(messages)
+        estimated_tokens = self._estimate_context_tokens(messages)
+        compacted_history = ""
+        if should_compact(estimated_tokens, config.CONTEXT_SOFT_LIMIT_TOKENS):
+            compacted_history = self._compact_history(messages)
         dynamic_system = assemble_messages(
             static_system_prompt=self.system,
             memory_text="",
@@ -85,6 +89,22 @@ class AgentRuntime:
             system=dynamic_system,
             tools=self.tool_registry.get_schemas(),
         )
+
+    def _estimate_context_tokens(self, messages: list[dict]) -> int:
+        prompt_text = "\n".join(self._message_text_for_budget(message) for message in messages)
+        return estimate_tokens(f"{self.system}\n{prompt_text}")
+
+    def _message_text_for_budget(self, message: dict) -> str:
+        try:
+            return json.dumps(message, ensure_ascii=False, sort_keys=True)
+        except TypeError:
+            content = message.get("content", "") if isinstance(message, dict) else message
+            if isinstance(content, str):
+                return content
+            try:
+                return json.dumps(content, ensure_ascii=False, sort_keys=True)
+            except TypeError:
+                return self._message_text_for_prompt(message)
 
     def _latest_user_text(self, messages: list[dict]) -> str:
         for message in reversed(messages):
@@ -182,7 +202,7 @@ class AgentRuntime:
 
     def _compact_history(self, messages: list[dict]) -> str:
         lines: list[str] = []
-        for message in messages[-MAX_COMPACT_HISTORY_MESSAGES:]:
+        for message in messages[-config.MAX_COMPACT_HISTORY_MESSAGES:]:
             role = message.get("role", "unknown")
             text = self._message_text_for_prompt(message)
             lines.append(f"{role}: {text}")

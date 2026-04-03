@@ -20,6 +20,27 @@ def test_read_line_range(tmp_path):
     assert "b" in result and "d" in result and "a" not in result
 
 
+def test_read_line_range_rejects_non_positive_start(tmp_path):
+    p = str(tmp_path / "lines.txt")
+    write_file(p, "a\nb\nc")
+    result = read_file(p, start_line=0, end_line=2)
+    assert "[error]" in result
+
+
+def test_read_line_range_rejects_non_positive_end(tmp_path):
+    p = str(tmp_path / "lines.txt")
+    write_file(p, "a\nb\nc")
+    result = read_file(p, start_line=1, end_line=0)
+    assert "[error]" in result
+
+
+def test_read_line_range_rejects_end_before_start(tmp_path):
+    p = str(tmp_path / "lines.txt")
+    write_file(p, "a\nb\nc")
+    result = read_file(p, start_line=3, end_line=2)
+    assert "[error]" in result
+
+
 def test_write_append(tmp_path):
     p = str(tmp_path / "log.txt")
     write_file(p, "line1\n")
