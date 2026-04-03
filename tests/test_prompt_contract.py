@@ -43,6 +43,7 @@ def test_tool_whitelist_section_includes_complete_expected_actions() -> None:
     expected_actions = {
         "read_file",
         "write_file",
+        "edit_file",
         "run_bash",
         "grep",
         "list_dir",

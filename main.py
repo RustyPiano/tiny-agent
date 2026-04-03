@@ -19,6 +19,7 @@ from extensions.loader import load_extensions
 from llm.factory import create_provider
 from skills import discover_skills
 from tools.bash_tool import register_bash_tool
+from tools.edit_file_tool import register_edit_file_tool
 from tools.file_tools import register_file_tools
 from tools.finish_tool import register_finish_tool
 from tools.grep_tool import register_grep_tool
@@ -73,6 +74,7 @@ def bootstrap(settings: AgentSettings) -> None:
         **event_fields,
     )
     register_file_tools()
+    register_edit_file_tool()
     register_bash_tool()
     register_skill_tool()
     register_summarize_tool()
@@ -104,6 +106,7 @@ def main() -> None:
     parser.add_argument("--provider", default=None, help="llm provider 类型: anthropic | openai")
     parser.add_argument("--model", default=None, help="模型名称")
     parser.add_argument("--base-url", default=None, dest="base_url", help="本地模型 base_url")
+    parser.add_argument("--show-turns", action="store_true", help="输出每轮 stop/tools 摘要")
     parser.add_argument(
         "--log-format",
         default="text",
@@ -158,6 +161,8 @@ def main() -> None:
                 session_id=args.session,
                 skills=skills,
                 verbose=args.verbose,
+                show_turns=args.show_turns,
+                turn_printer=print,
                 run_ctx=run_ctx,
             )
             print(f"\nAgent: {result}\n")

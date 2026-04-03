@@ -4,12 +4,13 @@ import pathlib
 from dataclasses import dataclass, field
 
 # --- 常量 ---
-MAX_TOKENS = 4096
+MAX_TOKENS = 16000
 MAX_TURNS = 20
 OUTPUT_TRUNCATE = 8000
 SESSIONS_DIR = "sessions"
 SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"
 MAX_FILE_READ_LINES = 2000
+MAX_WRITE_FILE_CHARS = 64000
 MAX_HISTORY_RECORDS = 15
 MAX_MEMORY_LINES = 200
 CONTEXT_SOFT_LIMIT_TOKENS = 160000
@@ -37,6 +38,7 @@ BASE_SYSTEM_PROMPT = """你是一个能力强大的本地 Agent。必须严格�
 你只允许调用以下 action 名称：
 - read_file
 - write_file
+- edit_file
 - run_bash
 - grep
 - list_dir

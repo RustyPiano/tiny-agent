@@ -53,7 +53,13 @@ def _load_history_with_provider_check(
     if not session_id:
         return []
     history, stored_provider = session_store.load(session_id)
-    if history and stored_provider != "unknown" and stored_provider != provider_type:
+    normalized_provider = (
+        stored_provider.strip().lower() if isinstance(stored_provider, str) else ""
+    )
+    # 兼容旧会话：provider 缺失或空字符串都视为 unknown。
+    if normalized_provider in {"", "unknown"}:
+        return history
+    if history and normalized_provider != provider_type:
         log_event("provider_mismatch", run_ctx, stored=stored_provider, current=provider_type)
         return []
     return history
@@ -66,10 +72,22 @@ def run(
     session_id: str | None = None,
     skills: list[str] | None = None,
     verbose: bool = False,
+    show_turns: bool = False,
+    turn_printer=None,
     run_ctx: RunContext | None = None,
 ) -> str:
     """执行一次完整的 Agent 任务。"""
-    return _run_with_runtime(user_input, settings, provider, session_id, skills, verbose, run_ctx)
+    return _run_with_runtime(
+        user_input,
+        settings,
+        provider,
+        session_id,
+        skills,
+        verbose,
+        show_turns,
+        turn_printer,
+        run_ctx,
+    )
 
 
 def _run_with_runtime(
@@ -79,6 +97,8 @@ def _run_with_runtime(
     session_id: str | None,
     skills: list[str] | None,
     verbose: bool,
+    show_turns: bool,
+    turn_printer,
     run_ctx: RunContext | None,
 ) -> str:
     # Backward-compatible no-op: verbose 已迁移到结构化日志体系。
@@ -102,5 +122,7 @@ def _run_with_runtime(
         run_ctx=run_ctx,
         session_id=session_id,
         provider_type=provider_type,
+        show_turns=show_turns,
+        turn_printer=turn_printer,
     )
     return runtime.run()

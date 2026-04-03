@@ -1,6 +1,7 @@
 # tests/test_tools.py
 from pathlib import Path
 
+import config
 from skills import discover_skills
 from tools.bash_tool import run_bash
 from tools.file_tools import read_file, write_file
@@ -46,6 +47,19 @@ def test_write_append(tmp_path):
     write_file(p, "line1\n")
     write_file(p, "line2\n", mode="append")
     assert read_file(p) == "line1\nline2\n"
+
+
+def test_write_file_rejects_oversized_content(tmp_path):
+    p = str(tmp_path / "too_large.txt")
+    oversized = "a" * (config.MAX_WRITE_FILE_CHARS + 1)
+    result = write_file(p, oversized)
+
+    assert "[error]" in result
+    assert str(len(oversized)) in result
+    assert str(config.MAX_WRITE_FILE_CHARS) in result
+    assert "edit_file" in result
+    assert "chunk" in result.lower()
+    assert not Path(p).exists()
 
 
 def test_read_nonexistent():

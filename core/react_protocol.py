@@ -37,3 +37,12 @@ def parse_react_json(raw: str, allowed_actions: set[str]) -> ReactDecision:
         raise ValueError("react decision action_input must be dict or 'NONE'")
 
     return ReactDecision(thought=thought, action=action, action_input=action_input)
+
+
+def parse_react_json_with_error(
+    raw: str, allowed_actions: set[str]
+) -> tuple[ReactDecision | None, str | None]:
+    try:
+        return parse_react_json(raw, allowed_actions), None
+    except ValueError as exc:
+        return None, str(exc)
