@@ -2,6 +2,7 @@
 from collections.abc import Callable
 
 _TOOLS: dict[str, dict] = {}
+_BEFORE_TOOL_CALL_HOOKS: list[Callable[[str, dict], dict]] = []
 
 
 def register(
@@ -29,6 +30,14 @@ def get_schemas() -> list[dict]:
     return [t["schema"] for t in _TOOLS.values()]
 
 
+def register_before_tool_call(hook: Callable[[str, dict], dict]) -> None:
+    _BEFORE_TOOL_CALL_HOOKS.append(hook)
+
+
+def clear_before_tool_call_hooks() -> None:
+    _BEFORE_TOOL_CALL_HOOKS.clear()
+
+
 def execute(name: str, inputs: dict) -> str:
     if name not in _TOOLS:
         return f"[error] 未知工具: {name}"
@@ -48,6 +57,19 @@ def execute(name: str, inputs: dict) -> str:
     input_schema = schema.get("input_schema", {})
     required = input_schema.get("required", []) or []
     handler_inputs = {k: v for k, v in inputs.items() if not k.startswith("_tool_")}
+
+    try:
+        for idx, hook in enumerate(_BEFORE_TOOL_CALL_HOOKS, start=1):
+            hook_result = hook(name, dict(handler_inputs))
+            if not isinstance(hook_result, dict):
+                return (
+                    f"[error] beforeToolCall hook #{idx} 必须返回 dict，"
+                    f"实际: {type(hook_result).__name__}"
+                )
+            handler_inputs = hook_result
+    except Exception as e:
+        return f"[error] beforeToolCall hook 执行失败: {e}"
+
     missing = [k for k in required if k not in handler_inputs]
     if missing:
         return f"[error] 缺少必填参数: {', '.join(missing)}"
