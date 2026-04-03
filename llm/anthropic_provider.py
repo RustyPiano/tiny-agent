@@ -14,12 +14,13 @@ class AnthropicProvider(BaseLLMProvider):
         resp = self.client.messages.create(
             model=self.model,
             max_tokens=MAX_TOKENS,
+            temperature=0.0,
             system=system,
             tools=tools or [],
             messages=messages,
         )
 
-        text = " ".join(b.text for b in resp.content if hasattr(b, "text") and b.text)
+        text = "".join(b.text for b in resp.content if hasattr(b, "text") and b.text)
         tool_calls = [
             ToolCall(id=b.id, name=b.name, inputs=b.input)
             for b in resp.content

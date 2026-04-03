@@ -1,5 +1,7 @@
 # tools/bash_tool.py
+import os
 import re
+import shlex
 import subprocess
 
 from config import OUTPUT_TRUNCATE
@@ -19,6 +21,12 @@ _BLOCKED_PATTERNS = [
     "parted",
 ]
 
+_BLOCKED_TOKENS = ["sudo", "curl", "wget"]
+
+_BLOCKED_TOKEN_PATTERNS = [
+    (token, re.compile(rf"(^|[;&|\s]){token}(\s|$)", re.IGNORECASE)) for token in _BLOCKED_TOKENS
+]
+
 # 使用正则匹配 rm -rf 的各种变体
 _RM_RF_PATTERNS = [
     r"rm\s+.*-[^-]*r[^-]*f.*\s+/",  # rm -rf /
@@ -32,6 +40,13 @@ _RM_RF_PATTERNS = [
 _RM_RF_COMPILED = [re.compile(p) for p in _RM_RF_PATTERNS]
 
 
+def _tokenize_command(command: str) -> list[str] | None:
+    try:
+        return shlex.split(command, posix=True)
+    except ValueError:
+        return None
+
+
 def _is_blocked(command: str) -> str | None:
     """检查命令是否被阻止，返回阻止原因或 None"""
     cmd_lower = command.lower().strip()
@@ -40,6 +55,17 @@ def _is_blocked(command: str) -> str | None:
     for pattern in _BLOCKED_PATTERNS:
         if pattern.lower() in cmd_lower:
             return f"包含危险模式: '{pattern}'"
+
+    for token, compiled_pattern in _BLOCKED_TOKEN_PATTERNS:
+        if compiled_pattern.search(command):
+            return f"包含受限命令: {token}"
+
+    tokens = _tokenize_command(command)
+    if tokens is not None:
+        for raw_token in tokens:
+            normalized = os.path.basename(raw_token).lower()
+            if normalized in _BLOCKED_TOKENS:
+                return f"包含受限命令: {normalized}"
 
     # 检查 rm -rf 变体
     for compiled_pattern in _RM_RF_COMPILED:
@@ -61,6 +87,9 @@ def run_bash(command: str, timeout: int = 30, workdir: str | None = None) -> str
     block_reason = _is_blocked(command)
     if block_reason:
         return f"[blocked] 命令被拒绝: {block_reason}\n原始命令: {command}"
+
+    if not command.strip():
+        return "[error] 空命令，未执行"
 
     try:
         result = subprocess.run(

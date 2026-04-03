@@ -42,10 +42,7 @@ def execute(name: str, inputs: dict) -> str:
 
     if parse_error:
         preview = str(raw_arguments)[:200] if raw_arguments is not None else ""
-        return (
-            "[error] 工具参数解析失败: "
-            f"{parse_error}; raw_arguments={preview!r}"
-        )
+        return f"[error] 工具参数解析失败: {parse_error}; raw_arguments={preview!r}"
 
     schema = tool_info.get("schema", {})
     input_schema = schema.get("input_schema", {})

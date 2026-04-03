@@ -38,7 +38,7 @@ class OpenAIProvider(BaseLLMProvider):
         # 把 Anthropic tool schema 转成 OpenAI function calling 格式
         oai_tools = [_to_openai_tool(t) for t in tools] if tools else []
 
-        kwargs: dict = dict(model=self.model, messages=full_messages)
+        kwargs: dict = dict(model=self.model, messages=full_messages, temperature=0.0)
         if getattr(self, "_use_max_completion_tokens", False):
             kwargs["max_completion_tokens"] = MAX_TOKENS
         else:
@@ -61,41 +61,23 @@ class OpenAIProvider(BaseLLMProvider):
                 name = _get_field(fn, "name")
                 if not name:
                     continue
-
-                parse_error = None
-                args_payload = _get_field(fn, "arguments", "{}")
-                raw_arguments = args_payload if isinstance(args_payload, str) else None
-
-                if isinstance(args_payload, str):
-                    try:
-                        parsed_inputs = json.loads(args_payload) if args_payload.strip() else {}
-                    except json.JSONDecodeError as e:
-                        parsed_inputs = {}
-                        parse_error = f"arguments JSON 解析失败: {e.msg} (pos={e.pos})"
-                else:
-                    parsed_inputs = args_payload
-                    try:
-                        raw_arguments = json.dumps(args_payload, ensure_ascii=False)
-                    except TypeError:
-                        raw_arguments = str(args_payload)
-
-                if isinstance(parsed_inputs, dict):
-                    inputs = parsed_inputs
-                else:
-                    inputs = {}
-                    parse_error = (
-                        parse_error
-                        or "arguments JSON 必须是 object，"
-                        f"实际: {type(parsed_inputs).__name__}"
-                    )
-
                 tool_calls.append(
-                    ToolCall(
-                        id=_get_field(tc, "id") or f"tool_call_{i}",
+                    _build_tool_call(
+                        call_id=_get_field(tc, "id") or f"tool_call_{i}",
                         name=name,
-                        inputs=inputs,
-                        parse_error=parse_error,
-                        raw_arguments=raw_arguments,
+                        args_payload=_get_field(fn, "arguments", "{}"),
+                    )
+                )
+
+        if not tool_calls:
+            legacy_fc = _get_field(msg, "function_call")
+            legacy_name = _get_field(legacy_fc, "name")
+            if legacy_name:
+                tool_calls.append(
+                    _build_tool_call(
+                        call_id=_get_field(legacy_fc, "id") or "tool_call_legacy_1",
+                        name=legacy_name,
+                        args_payload=_get_field(legacy_fc, "arguments", "{}"),
                     )
                 )
 
@@ -199,6 +181,40 @@ def _extract_message(resp, model: str, base_url) -> object:
             reason="choices[0].message 为空",
         )
     return msg
+
+
+def _build_tool_call(call_id: str, name: str, args_payload) -> ToolCall:
+    parse_error = None
+    raw_arguments = args_payload if isinstance(args_payload, str) else None
+
+    if isinstance(args_payload, str):
+        try:
+            parsed_inputs = json.loads(args_payload) if args_payload.strip() else {}
+        except json.JSONDecodeError as e:
+            parsed_inputs = {}
+            parse_error = f"arguments JSON 解析失败: {e.msg} (pos={e.pos})"
+    else:
+        parsed_inputs = args_payload
+        try:
+            raw_arguments = json.dumps(args_payload, ensure_ascii=False)
+        except TypeError:
+            raw_arguments = str(args_payload)
+
+    if isinstance(parsed_inputs, dict):
+        inputs = parsed_inputs
+    else:
+        inputs = {}
+        parse_error = parse_error or (
+            f"arguments JSON 必须是 object，实际: {type(parsed_inputs).__name__}"
+        )
+
+    return ToolCall(
+        id=call_id,
+        name=name,
+        inputs=inputs,
+        parse_error=parse_error,
+        raw_arguments=raw_arguments,
+    )
 
 
 def _raise_malformed_response(resp, model: str, base_url, reason: str) -> None:

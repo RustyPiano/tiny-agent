@@ -446,7 +446,7 @@ def test_runtime_forwards_tool_parse_error_metadata():
             return "[ok]"
 
         def get_schemas(self) -> list[dict]:
-            return []
+            return [{"name": "write_file"}]
 
     class NoopStore:
         def save(self, session_id, messages, provider_type):
@@ -510,7 +510,7 @@ def test_runtime_handles_non_dict_tool_inputs():
             return "[ok]"
 
         def get_schemas(self) -> list[dict]:
-            return []
+            return [{"name": "write_file"}]
 
     class NoopStore:
         def save(self, session_id, messages, provider_type):

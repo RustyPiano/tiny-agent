@@ -122,10 +122,33 @@ def test_chat_marks_tool_call_parse_error_when_arguments_invalid_json():
     assert r.tool_calls[0].parse_error is not None
     assert "JSON" in r.tool_calls[0].parse_error
     assert r.tool_calls[0].raw_arguments == bad_args
-    assert (
-        r.assistant_message["tool_calls"][0]["function"]["arguments"]
-        == bad_args
+    assert r.assistant_message["tool_calls"][0]["function"]["arguments"] == bad_args
+
+
+def test_chat_parses_legacy_function_call_when_tool_calls_empty():
+    response = _Obj(
+        choices=[
+            _Obj(
+                message=_Obj(
+                    content="",
+                    tool_calls=[],
+                    function_call=_Obj(
+                        name="use_skill",
+                        arguments='{"name": "using-superpowers"}',
+                    ),
+                )
+            )
+        ]
     )
+    p = _provider_with_resp(response)
+
+    r = p.chat(messages=[], system="sys", tools=[])
+
+    assert r.stop_reason == "tool_use"
+    assert len(r.tool_calls) == 1
+    assert r.tool_calls[0].name == "use_skill"
+    assert r.tool_calls[0].inputs == {"name": "using-superpowers"}
+    assert r.assistant_message["tool_calls"][0]["function"]["name"] == "use_skill"
 
 
 def test_chat_uses_max_completion_tokens_for_official_openai_endpoint():
@@ -140,12 +163,18 @@ def test_chat_uses_max_completion_tokens_for_official_openai_endpoint():
     p.model = "gpt-4o-mini"
     p._use_max_completion_tokens = True
     p.client = type(
-        "Client", (), {"base_url": "https://api.openai.com/v1", "chat": type("Chat", (), {"completions": _CaptureCompletions()})()}
+        "Client",
+        (),
+        {
+            "base_url": "https://api.openai.com/v1",
+            "chat": type("Chat", (), {"completions": _CaptureCompletions()})(),
+        },
     )()
 
     r = p.chat(messages=[], system="sys", tools=[])
 
     assert r.stop_reason == "end_turn"
+    assert captured["temperature"] == 0.0
     assert "max_completion_tokens" in captured
     assert "max_tokens" not in captured
 
@@ -162,12 +191,18 @@ def test_chat_uses_max_tokens_for_compat_endpoints():
     p.model = "qwen2.5:14b"
     p._use_max_completion_tokens = False
     p.client = type(
-        "Client", (), {"base_url": "http://localhost:11434/v1", "chat": type("Chat", (), {"completions": _CaptureCompletions()})()}
+        "Client",
+        (),
+        {
+            "base_url": "http://localhost:11434/v1",
+            "chat": type("Chat", (), {"completions": _CaptureCompletions()})(),
+        },
     )()
 
     r = p.chat(messages=[], system="sys", tools=[])
 
     assert r.stop_reason == "end_turn"
+    assert captured["temperature"] == 0.0
     assert "max_tokens" in captured
     assert "max_completion_tokens" not in captured
 

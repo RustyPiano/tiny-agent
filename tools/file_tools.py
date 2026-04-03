@@ -41,9 +41,22 @@ def read_file(path: str, start_line: int | None = None, end_line: int | None = N
 
     if start_line is not None or end_line is not None:
         lines = content.splitlines()
+        if start_line is not None and start_line <= 0:
+            return f"[error] start_line 必须大于 0，实际: {start_line}"
+        if end_line is not None and end_line <= 0:
+            return f"[error] end_line 必须大于 0，实际: {end_line}"
+        if start_line is not None and end_line is not None and end_line < start_line:
+            return (
+                "[error] end_line 不能小于 start_line，"
+                f"实际: start_line={start_line}, end_line={end_line}"
+            )
         s = (start_line or 1) - 1
         e = end_line or len(lines)
         return "\n".join(f"{s + i + 1}\t{line}" for i, line in enumerate(lines[s:e]))
+
+    lines_with_endings = content.splitlines(keepends=True)
+    if len(lines_with_endings) > config.MAX_FILE_READ_LINES:
+        return "".join(lines_with_endings[: config.MAX_FILE_READ_LINES])
 
     return content
 
