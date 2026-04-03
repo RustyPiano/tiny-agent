@@ -15,7 +15,7 @@ from core.logging import RunContext, log_event
 from core.memory_store import MemoryStore
 from core.message_assembler import assemble_messages
 from core.policies import DefaultRuntimePolicy, RuntimePolicy, Step
-from core.react_protocol import ReactDecision, parse_react_json, parse_react_json_with_error
+from core.react_protocol import ReactDecision, parse_react_json_with_error
 from core.sandbox import sandbox_cwd
 from core.security import SecurityGuard
 from llm.base import BaseLLMProvider, LLMResponse, ToolCall
@@ -301,11 +301,7 @@ class AgentRuntime:
         stripped = raw.strip()
         if not stripped.startswith("{"):
             return False
-        return (
-            '"thought"' in stripped
-            or '"action"' in stripped
-            or '"action_input"' in stripped
-        )
+        return '"thought"' in stripped or '"action"' in stripped or '"action_input"' in stripped
 
     def _end_turn_parse_error_observation(self, parse_error: str) -> str:
         return (

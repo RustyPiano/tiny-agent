@@ -138,7 +138,7 @@ def test_main_show_turns_flag_passes_output_pathway(monkeypatch, capsys):
         try:
             return next(inputs)
         except StopIteration:
-            raise KeyboardInterrupt
+            raise KeyboardInterrupt from None
 
     monkeypatch.setattr(builtins, "input", fake_input)
     monkeypatch.setattr("sys.argv", ["main.py", "--show-turns"])
@@ -156,7 +156,10 @@ def test_runtime_turn_summary_counts_react_fallback_tool_and_does_not_leak_suffi
     provider = _SequenceProvider(
         [
             LLMResponse(
-                text='{"thought":"need shell","action":"run_bash","action_input":{"command":"echo hi"}}',
+                text=(
+                    '{"thought":"need shell","action":"run_bash",'
+                    '"action_input":{"command":"echo hi"}}'
+                ),
                 tool_calls=[],
                 stop_reason="end_turn",
                 assistant_message={"role": "assistant", "content": "run tool"},

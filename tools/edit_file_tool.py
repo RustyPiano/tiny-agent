@@ -27,7 +27,9 @@ def edit_file(path: str, old_str: str, new_str: str, replace_all: bool = False) 
     if not replace_all and count > 1:
         return "[error] old_str 匹配多处，请设置 replace_all=true"
 
-    updated = content.replace(old_str, new_str) if replace_all else content.replace(old_str, new_str, 1)
+    updated = (
+        content.replace(old_str, new_str) if replace_all else content.replace(old_str, new_str, 1)
+    )
     try:
         p.write_text(updated, encoding="utf-8")
     except OSError as exc:
