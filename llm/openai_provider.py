@@ -32,18 +32,38 @@ class OpenAIProvider(BaseLLMProvider):
             kwargs["tools"] = oai_tools
 
         resp = self.client.chat.completions.create(**kwargs)
-        msg = resp.choices[0].message
+        msg = _extract_message(
+            resp,
+            model=self.model,
+            base_url=getattr(self.client, "base_url", None),
+        )
 
         tool_calls = []
-        if msg.tool_calls:
-            for tc in msg.tool_calls:
+        raw_tool_calls = _get_field(msg, "tool_calls") or []
+        if isinstance(raw_tool_calls, list):
+            for i, tc in enumerate(raw_tool_calls, start=1):
+                fn = _get_field(tc, "function")
+                name = _get_field(fn, "name")
+                if not name:
+                    continue
+
+                args = _get_field(fn, "arguments", "{}")
+                if not isinstance(args, str):
+                    args = json.dumps(args)
+
                 try:
-                    inputs = json.loads(tc.function.arguments)
+                    inputs = json.loads(args)
                 except json.JSONDecodeError:
                     inputs = {}
-                tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, inputs=inputs))
+                tool_calls.append(
+                    ToolCall(
+                        id=_get_field(tc, "id") or f"tool_call_{i}",
+                        name=name,
+                        inputs=inputs,
+                    )
+                )
 
-        text = msg.content or ""
+        text = _message_text(msg)
         stop = "tool_use" if tool_calls else "end_turn"
 
         # 序列化 assistant 消息
@@ -82,3 +102,68 @@ def _to_openai_tool(anthropic_schema: dict) -> dict:
             "parameters": anthropic_schema.get("input_schema", {}),
         },
     }
+
+
+def _get_field(obj, key: str, default=None):
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _message_text(msg) -> str:
+    content = _get_field(msg, "content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                text = block.get("text")
+            else:
+                text = getattr(block, "text", None)
+            if isinstance(text, str) and text:
+                parts.append(text)
+        return "".join(parts)
+    return ""
+
+
+def _extract_message(resp, model: str, base_url) -> object:
+    choices = _get_field(resp, "choices")
+    if not isinstance(choices, list) or not choices:
+        _raise_malformed_response(
+            resp,
+            model=model,
+            base_url=base_url,
+            reason="响应缺少 choices，或 choices 为空",
+        )
+
+    msg = _get_field(choices[0], "message")
+    if msg is None:
+        _raise_malformed_response(
+            resp,
+            model=model,
+            base_url=base_url,
+            reason="choices[0].message 为空",
+        )
+    return msg
+
+
+def _raise_malformed_response(resp, model: str, base_url, reason: str) -> None:
+    error_obj = _get_field(resp, "error")
+    error_hint = ""
+    if isinstance(error_obj, dict):
+        error_hint = error_obj.get("message") or str(error_obj)
+    elif error_obj:
+        error_hint = str(error_obj)
+
+    provider_hint = (
+        "OpenAI 兼容接口返回了非标准 chat.completions 响应。"
+        "请检查 base_url/model 是否正确，"
+        "并确认该模型支持当前请求格式（尤其是 tools/function calling）。"
+    )
+    if error_hint:
+        provider_hint = f"{provider_hint} 服务端错误: {error_hint}"
+
+    raise RuntimeError(
+        f"LLM 响应解析失败: {reason}; model={model!r}; base_url={base_url!r}. {provider_hint}"
+    )
