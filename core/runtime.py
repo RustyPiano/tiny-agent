@@ -11,6 +11,8 @@ from core.logging import RunContext, log_event
 from core.message_assembler import assemble_messages
 from core.policies import DefaultRuntimePolicy, RuntimePolicy, Step
 from core.react_protocol import ReactDecision, parse_react_json
+from core.sandbox import sandbox_cwd
+from core.security import SecurityGuard
 from llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
 if TYPE_CHECKING:
@@ -48,6 +50,20 @@ class AgentRuntime:
         self.provider_type = provider_type
         self.policy = policy or DefaultRuntimePolicy()
         self.state = TurnState(turn=0)
+        allowed_tools: set[str] = set()
+        if tool_registry is not None:
+            list_tools = getattr(tool_registry, "list_tools", None)
+            if callable(list_tools):
+                allowed_tools.update(name for name in list_tools() if isinstance(name, str) and name)
+            get_schemas = getattr(tool_registry, "get_schemas", None)
+            if callable(get_schemas):
+                schemas = get_schemas() or []
+                for schema in schemas:
+                    if isinstance(schema, dict):
+                        schema_name = schema.get("name")
+                        if isinstance(schema_name, str) and schema_name:
+                            allowed_tools.add(schema_name)
+        self.security_guard = SecurityGuard(allowed_tools=allowed_tools)
 
     def next_step(self, response: LLMResponse | None) -> Step:
         return self.policy.next_step(self.state.turn, self.settings.max_turns, response)
@@ -222,6 +238,13 @@ class AgentRuntime:
             execute_inputs = dict(inputs_obj)
             log_inputs = dict(inputs_obj)
 
+            allowed, reason = self.security_guard.validate_tool_call(tc.name, execute_inputs)
+            if not allowed:
+                blocked_output = f"[blocked] {reason}"
+                results.append(self.provider.format_tool_result(tc.id, blocked_output))
+                log_event("tool_result", self.run_ctx, tool=tc.name, output_preview=blocked_output)
+                continue
+
             parse_error = tc.parse_error
             raw_arguments = tc.raw_arguments
             if not isinstance(tc.inputs, dict):
@@ -244,7 +267,11 @@ class AgentRuntime:
                 }
 
             log_event("tool_call", self.run_ctx, tool=tc.name, inputs=log_inputs)
-            output = self.tool_registry.execute(tc.name, execute_inputs)
+            if tc.name == "run_bash":
+                with sandbox_cwd():
+                    output = self.tool_registry.execute(tc.name, execute_inputs)
+            else:
+                output = self.tool_registry.execute(tc.name, execute_inputs)
             results.append(self.provider.format_tool_result(tc.id, output))
             output_text = str(output)
             log_event("tool_result", self.run_ctx, tool=tc.name, output_preview=output_text[:120])
