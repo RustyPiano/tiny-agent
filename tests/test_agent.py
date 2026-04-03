@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from config import AgentSettings
-from core.agent import run
+from core.agent import _load_history_with_provider_check, run
 from core.context import Context
 from core.logging import RunContext
 from core.policies import RuntimePolicy, Step
@@ -561,3 +561,35 @@ def test_system_prompt_contains_available_skills():
     )
     prompt = build_system_prompt()
     assert "## Available Skills" not in prompt
+
+
+def test_load_history_treats_empty_stored_provider_as_unknown(monkeypatch):
+    def fake_load(session_id: str):
+        _ = session_id
+        return [{"role": "user", "content": "legacy"}], ""
+
+    monkeypatch.setattr("core.agent.session_store.load", fake_load)
+
+    history = _load_history_with_provider_check(
+        session_id="legacy-session",
+        provider_type="openai",
+        run_ctx=RunContext(),
+    )
+
+    assert history == [{"role": "user", "content": "legacy"}]
+
+
+def test_load_history_treats_missing_stored_provider_as_unknown(monkeypatch):
+    def fake_load(session_id: str):
+        _ = session_id
+        return [{"role": "user", "content": "legacy"}], None
+
+    monkeypatch.setattr("core.agent.session_store.load", fake_load)
+
+    history = _load_history_with_provider_check(
+        session_id="legacy-session",
+        provider_type="anthropic",
+        run_ctx=RunContext(),
+    )
+
+    assert history == [{"role": "user", "content": "legacy"}]

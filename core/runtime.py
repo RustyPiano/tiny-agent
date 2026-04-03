@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -59,6 +60,8 @@ class AgentRuntime:
         session_id: str | None,
         provider_type: str,
         policy: RuntimePolicy | None = None,
+        show_turns: bool = False,
+        turn_printer: Callable[[str], None] | None = None,
     ):
         self.provider = provider
         self.settings = settings
@@ -70,7 +73,11 @@ class AgentRuntime:
         self.session_id = session_id
         self.provider_type = provider_type
         self.policy = policy or DefaultRuntimePolicy()
+        self.show_turns = show_turns
+        self.turn_printer = turn_printer
         self.state = TurnState(turn=0)
+        self._last_tool_statuses: list[str] = []
+        self._last_executed_tools_count: int = 0
         allowed_tools: set[str] = set()
         if tool_registry is not None:
             list_tools = getattr(tool_registry, "list_tools", None)
@@ -311,6 +318,7 @@ class AgentRuntime:
 
     def execute_tools(self, response: LLMResponse) -> list[dict]:
         results: list[dict] = []
+        tool_statuses: list[str] = []
         tool_calls = list(response.tool_calls)
         # ReAct JSON fallback is only considered when tool_calls is empty.
         if not tool_calls:
@@ -329,6 +337,8 @@ class AgentRuntime:
                     )
                 ]
 
+        self._last_executed_tools_count = len(tool_calls)
+
         for tc in tool_calls:
             inputs_obj = tc.inputs if isinstance(tc.inputs, dict) else {}
             execute_inputs = dict(inputs_obj)
@@ -338,6 +348,7 @@ class AgentRuntime:
             if not allowed:
                 blocked_output = f"[blocked] {reason}"
                 results.append(self.provider.format_tool_result(tc.id, blocked_output))
+                tool_statuses.append(f"{tc.name}:blocked")
                 log_event(
                     "tool_result",
                     self.run_ctx,
@@ -374,6 +385,9 @@ class AgentRuntime:
                     output = self.tool_registry.execute(tc.name, execute_inputs)
             except Exception as exc:
                 output = f"[tool_error] {type(exc).__name__}: {exc}"
+                tool_statuses.append(f"{tc.name}:error")
+            else:
+                tool_statuses.append(f"{tc.name}:ok")
             results.append(self.provider.format_tool_result(tc.id, output))
             output_text = str(output)
             log_event(
@@ -382,7 +396,23 @@ class AgentRuntime:
                 tool=tc.name,
                 output_preview=output_text[:120],
             )
+        self._last_tool_statuses = tool_statuses
         return results
+
+    def _print_turn_summary(self, response: LLMResponse) -> None:
+        if not self.show_turns or self.turn_printer is None:
+            return
+
+        tools_count = self._last_executed_tools_count
+        if tools_count == 0 and self._last_tool_statuses:
+            tools_count = len(self._last_tool_statuses)
+
+        summary = f"[t{self.state.turn}] stop={response.stop_reason} tools={tools_count}"
+        if self._last_tool_statuses:
+            summary += " " + " ".join(self._last_tool_statuses)
+        self._last_tool_statuses = []
+        self._last_executed_tools_count = 0
+        self.turn_printer(summary)
 
     def _should_retry_react_format(self, response: LLMResponse) -> bool:
         if response.stop_reason != "tool_use":
@@ -423,6 +453,12 @@ class AgentRuntime:
                 log_event("turn_start", self.run_ctx)
                 response = self.call_llm()
                 self.state.response = response
+                log_event(
+                    "assistant_decision",
+                    self.run_ctx,
+                    stop_reason=response.stop_reason,
+                    tool_calls_count=len(response.tool_calls),
+                )
                 self.ctx.add_assistant(response.assistant_message)
                 continue
             if step == Step.EXECUTE_TOOLS:
@@ -452,6 +488,7 @@ class AgentRuntime:
                 self.state.react_format_retries = 0
                 packaged = self.provider.tool_results_as_message(results)
                 self.ctx.add_tool_results(packaged)
+                self._print_turn_summary(current_response)
                 self.state.response = None
                 continue
             if step == Step.PERSIST:
@@ -469,6 +506,7 @@ class AgentRuntime:
                         results = self.execute_tools(current_response)
                         packaged = self.provider.tool_results_as_message(results)
                         self.ctx.add_tool_results(packaged)
+                        self._print_turn_summary(current_response)
                         self.state.end_turn_react_parse_retries = 0
                         self.state.response = None
                         continue
@@ -493,6 +531,7 @@ class AgentRuntime:
                         self.state.response = None
                         continue
                     self.state.end_turn_react_parse_retries = 0
+                    self._print_turn_summary(current_response)
                 self.persist_session()
                 log_event("run_end", self.run_ctx, stop_reason="end_turn")
                 return self.final_response_text()
