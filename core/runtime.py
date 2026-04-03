@@ -555,6 +555,7 @@ class AgentRuntime:
                 self.ctx.add_tool_results(packaged)
                 self._print_turn_summary(current_response)
                 self.state.response = None
+                self.persist_session()
                 continue
             if step == Step.PERSIST:
                 self.persist_session()

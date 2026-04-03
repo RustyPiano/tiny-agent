@@ -337,7 +337,8 @@ def test_runtime_override_execute_tools_and_persist_session():
 
     assert runtime.run() == "done"
     assert runtime.execute_called is True
-    assert runtime.persist_calls == 1
+    # persist after execute_tools + persist at run end (DONE path)
+    assert runtime.persist_calls == 2
 
 
 def test_runtime_custom_policy_persist_path():
