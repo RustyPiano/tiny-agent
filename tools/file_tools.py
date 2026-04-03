@@ -66,6 +66,14 @@ def write_file(path: str, content: str, mode: str = "overwrite") -> str:
     if err:
         return f"[error] {err}"
 
+    content_len = len(content)
+    if content_len > config.MAX_WRITE_FILE_CHARS:
+        return (
+            "[error] write_file 内容过大: "
+            f"{content_len} 字符，超过上限 {config.MAX_WRITE_FILE_CHARS} 字符。"
+            "请改用 edit_file 做局部修改，或将内容分块（chunking）写入。"
+        )
+
     p.parent.mkdir(parents=True, exist_ok=True)
     if mode == "append":
         with p.open("a", encoding="utf-8") as f:
