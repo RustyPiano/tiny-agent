@@ -24,6 +24,18 @@ if TYPE_CHECKING:
 class TurnState:
     turn: int
     response: LLMResponse | None = None
+    react_format_retries: int = 0
+
+
+REACT_FORMAT_MAX_RETRIES = 3
+REACT_FORMAT_RETRY_OBSERVATION = (
+    "Observation: ReAct output parse failed. Reply with strict JSON only, "
+    'exact keys {"thought","action","action_input"}, action must be allowed tool name or "NONE", '
+    'and action_input must be an object or the string "NONE".'
+)
+REACT_FORMAT_RETRY_EXHAUSTED_PAYLOAD = (
+    '{"thought":"format_retry_exhausted","action":"NONE","action_input":"NONE"}'
+)
 
 
 class AgentRuntime:
@@ -287,15 +299,28 @@ class AgentRuntime:
                 }
 
             log_event("tool_call", self.run_ctx, tool=tc.name, inputs=log_inputs)
-            if tc.name == "run_bash":
-                with sandbox_cwd():
+            try:
+                if tc.name == "run_bash":
+                    with sandbox_cwd():
+                        output = self.tool_registry.execute(tc.name, execute_inputs)
+                else:
                     output = self.tool_registry.execute(tc.name, execute_inputs)
-            else:
-                output = self.tool_registry.execute(tc.name, execute_inputs)
+            except Exception as exc:
+                output = f"[tool_error] {type(exc).__name__}: {exc}"
             results.append(self.provider.format_tool_result(tc.id, output))
             output_text = str(output)
             log_event("tool_result", self.run_ctx, tool=tc.name, output_preview=output_text[:120])
         return results
+
+    def _should_retry_react_format(self, response: LLMResponse) -> bool:
+        if response.stop_reason != "tool_use":
+            return False
+        if response.tool_calls:
+            return False
+        decision = self.parse_react_decision(response.text)
+        if decision is None:
+            return True
+        return decision.action == "NONE"
 
     def persist_session(self) -> None:
         if self.session_id:
@@ -329,7 +354,18 @@ class AgentRuntime:
                         "[error] Agent runtime state invalid: "
                         "missing response before tool execution."
                     )
+                if self._should_retry_react_format(current_response):
+                    self.state.react_format_retries += 1
+                    if self.state.react_format_retries > REACT_FORMAT_MAX_RETRIES:
+                        self.persist_session()
+                        log_event("run_end", self.run_ctx, stop_reason="react_format_retry_exhausted")
+                        return REACT_FORMAT_RETRY_EXHAUSTED_PAYLOAD
+                    self.ctx.add_user(REACT_FORMAT_RETRY_OBSERVATION)
+                    self.state.response = None
+                    continue
+
                 results = self.execute_tools(current_response)
+                self.state.react_format_retries = 0
                 packaged = self.provider.tool_results_as_message(results)
                 self.ctx.add_tool_results(packaged)
                 self.state.response = None
