@@ -4,7 +4,7 @@ import pathlib
 from dataclasses import dataclass, field
 
 # --- 常量 ---
-MAX_TOKENS = 4096
+MAX_TOKENS = 16000
 MAX_TURNS = 20
 OUTPUT_TRUNCATE = 8000
 SESSIONS_DIR = "sessions"
