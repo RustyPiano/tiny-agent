@@ -65,13 +65,29 @@ def test_openai_tool_results_as_message():
     assert msgs[1]["role"] == "tool"
 
 
+def test_anthropic_block_to_dict_keeps_tool_result_fields():
+    from llm.anthropic_provider import _block_to_dict
+
+    class _ToolResultBlock:
+        type = "tool_result"
+        tool_use_id = "toolu_123"
+        content = "done"
+        is_error = False
+
+    result = _block_to_dict(_ToolResultBlock())
+    assert result["type"] == "tool_result"
+    assert result["tool_use_id"] == "toolu_123"
+    assert result["content"] == "done"
+    assert result["is_error"] is False
+
+
 def test_factory_anthropic():
     p = create_provider({"type": "anthropic", "model": "claude-opus-4-6"})
     assert hasattr(p, "chat")
 
 
 def test_factory_openai():
-    p = create_provider({"type": "openai", "model": "gpt-4o"})
+    p = create_provider({"type": "openai", "model": "gpt-4o", "api_key": "test-key"})
     assert hasattr(p, "chat")
 
 

@@ -18,7 +18,18 @@ class OpenAIProvider(BaseLLMProvider):
 
     def __init__(self, model: str, base_url: str | None = None, api_key: str | None = None):
         self.model = model
-        self.client = OpenAI(base_url=base_url, api_key=api_key or "not-needed")
+        # 官方 OpenAI 端点优先使用 max_completion_tokens；兼容端点沿用 max_tokens
+        self._use_max_completion_tokens = base_url is None
+
+        client_kwargs: dict = {}
+        if base_url is not None:
+            client_kwargs["base_url"] = base_url
+
+        resolved_api_key = _resolve_api_key(api_key=api_key, base_url=base_url)
+        if resolved_api_key is not None:
+            client_kwargs["api_key"] = resolved_api_key
+
+        self.client = OpenAI(**client_kwargs)
 
     def chat(self, messages, system, tools) -> LLMResponse:
         # OpenAI system 放在 messages 首条
@@ -27,7 +38,11 @@ class OpenAIProvider(BaseLLMProvider):
         # 把 Anthropic tool schema 转成 OpenAI function calling 格式
         oai_tools = [_to_openai_tool(t) for t in tools] if tools else []
 
-        kwargs: dict = dict(model=self.model, messages=full_messages, max_tokens=MAX_TOKENS)
+        kwargs: dict = dict(model=self.model, messages=full_messages)
+        if getattr(self, "_use_max_completion_tokens", False):
+            kwargs["max_completion_tokens"] = MAX_TOKENS
+        else:
+            kwargs["max_tokens"] = MAX_TOKENS
         if oai_tools:
             kwargs["tools"] = oai_tools
 
@@ -94,7 +109,14 @@ class OpenAIProvider(BaseLLMProvider):
                 {
                     "id": tc.id,
                     "type": "function",
-                    "function": {"name": tc.name, "arguments": json.dumps(tc.inputs)},
+                    "function": {
+                        "name": tc.name,
+                        "arguments": (
+                            tc.raw_arguments
+                            if isinstance(tc.raw_arguments, str)
+                            else json.dumps(tc.inputs, ensure_ascii=False)
+                        ),
+                    },
                 }
                 for tc in tool_calls
             ]
@@ -123,6 +145,16 @@ def _to_openai_tool(anthropic_schema: dict) -> dict:
             "parameters": anthropic_schema.get("input_schema", {}),
         },
     }
+
+
+def _resolve_api_key(api_key: str | None, base_url: str | None) -> str | None:
+    if api_key:
+        return api_key
+    if base_url is None:
+        # 官方端点下交给 SDK 从 OPENAI_API_KEY 等环境变量读取
+        return None
+    # 兼容端点通常不校验 key，但 SDK 需要该字段存在
+    return "not-needed"
 
 
 def _get_field(obj, key: str, default=None):

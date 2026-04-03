@@ -1,4 +1,4 @@
-from llm.openai_provider import OpenAIProvider
+from llm.openai_provider import OpenAIProvider, _resolve_api_key
 
 
 class _DummyCompletions:
@@ -122,3 +122,59 @@ def test_chat_marks_tool_call_parse_error_when_arguments_invalid_json():
     assert r.tool_calls[0].parse_error is not None
     assert "JSON" in r.tool_calls[0].parse_error
     assert r.tool_calls[0].raw_arguments == bad_args
+    assert (
+        r.assistant_message["tool_calls"][0]["function"]["arguments"]
+        == bad_args
+    )
+
+
+def test_chat_uses_max_completion_tokens_for_official_openai_endpoint():
+    captured: dict = {}
+
+    class _CaptureCompletions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return _Obj(choices=[_Obj(message=_Obj(content="ok", tool_calls=[]))])
+
+    p = OpenAIProvider.__new__(OpenAIProvider)
+    p.model = "gpt-4o-mini"
+    p._use_max_completion_tokens = True
+    p.client = type(
+        "Client", (), {"base_url": "https://api.openai.com/v1", "chat": type("Chat", (), {"completions": _CaptureCompletions()})()}
+    )()
+
+    r = p.chat(messages=[], system="sys", tools=[])
+
+    assert r.stop_reason == "end_turn"
+    assert "max_completion_tokens" in captured
+    assert "max_tokens" not in captured
+
+
+def test_chat_uses_max_tokens_for_compat_endpoints():
+    captured: dict = {}
+
+    class _CaptureCompletions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return _Obj(choices=[_Obj(message=_Obj(content="ok", tool_calls=[]))])
+
+    p = OpenAIProvider.__new__(OpenAIProvider)
+    p.model = "qwen2.5:14b"
+    p._use_max_completion_tokens = False
+    p.client = type(
+        "Client", (), {"base_url": "http://localhost:11434/v1", "chat": type("Chat", (), {"completions": _CaptureCompletions()})()}
+    )()
+
+    r = p.chat(messages=[], system="sys", tools=[])
+
+    assert r.stop_reason == "end_turn"
+    assert "max_tokens" in captured
+    assert "max_completion_tokens" not in captured
+
+
+def test_resolve_api_key_prefers_env_on_official_endpoint():
+    assert _resolve_api_key(api_key=None, base_url=None) is None
+
+
+def test_resolve_api_key_uses_placeholder_for_compat_endpoint():
+    assert _resolve_api_key(api_key=None, base_url="http://localhost:11434/v1") == "not-needed"

@@ -52,4 +52,20 @@ def _block_to_dict(block) -> dict:
         return {"type": "text", "text": block.text}
     if block.type == "tool_use":
         return {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
-    return {"type": block.type}
+
+    block_dict: dict = {"type": getattr(block, "type", "unknown")}
+
+    if hasattr(block, "id"):
+        block_dict["id"] = block.id
+    if hasattr(block, "name"):
+        block_dict["name"] = block.name
+    if hasattr(block, "input"):
+        block_dict["input"] = block.input
+    if hasattr(block, "tool_use_id"):
+        block_dict["tool_use_id"] = block.tool_use_id
+    if hasattr(block, "content"):
+        block_dict["content"] = block.content
+    if hasattr(block, "is_error"):
+        block_dict["is_error"] = block.is_error
+
+    return block_dict
