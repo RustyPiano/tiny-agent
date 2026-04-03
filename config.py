@@ -8,6 +8,11 @@ MAX_TOKENS = 4096
 MAX_TURNS = 20
 OUTPUT_TRUNCATE = 8000
 SESSIONS_DIR = "sessions"
+SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"
+MAX_FILE_READ_LINES = 2000
+MAX_HISTORY_RECORDS = 15
+MAX_MEMORY_LINES = 200
+CONTEXT_SOFT_LIMIT_TOKENS = 160000
 
 # 工作空间根目录（向后兼容，测试和 tools 仍在引用）
 WORKSPACE_ROOT = pathlib.Path(os.getenv("AGENT_WORKSPACE", os.getcwd())).resolve()
@@ -18,6 +23,16 @@ BASE_SYSTEM_PROMPT = """你是一个能力强大的本地 Agent。
 你可以读写文件、执行 bash 命令来完成用户交代的任务。
 执行有副作用的操作前，先通过 read_file 或 run_bash('ls') 了解现状，再动手。
 每次工具调用后，根据结果决定下一步，不要盲目连续操作。"""
+
+
+@dataclass
+class FeatureFlags:
+    strict_react_json: bool = True
+    enable_memory_md: bool = True
+    enable_sandbox: bool = True
+    enable_multi_agent: bool = False
+    enable_daemon: bool = False
+    enable_pet_mode: bool = False
 
 
 @dataclass
