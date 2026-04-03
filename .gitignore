@@ -1,0 +1,27 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+sessions/*.json
+*.egg-info/
+dist/
+build/
+.env
+
+# Virtual environment
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Coverage
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+*.log
