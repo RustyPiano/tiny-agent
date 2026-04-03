@@ -88,6 +88,14 @@ agent-framework/
 - **工具注册**: `tools/registry.py` 提供声明式工具注册，自动转换为 LLM schema
 - **Skill 注入**: `skills/` 动态注入 prompt 片段，扩展 Agent 能力
 
+## LiteAgent 哲学对齐
+
+- 静态 system prompt 现在声明了严格 ReAct JSON 契约（`"thought"` / `"action"` / `"action_input"`）。
+- prompt 明确了工具白名单、安全约束和上下文纪律（轮次/历史/记忆边界）。
+- 静态区域显式引用 `__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__`，用于区分静态契约与运行时动态上下文。
+- 相关测试是轻量 anti-regression 护栏（检查关键条款是否存在），不等价于对模型行为做完整语义验证。
+- 详细说明见 `docs/liteagent-philosophy-alignment.md`。
+
 ## 扩展指南
 
 - [如何新增 Tool](docs/how-to-add-tool.md)
