@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
+
+import openai
 
 import config
 from core.context import Context
@@ -116,11 +119,45 @@ class AgentRuntime:
             last_observation=last_observation,
             current_task=current_task,
         )
-        return self.provider.chat(
-            messages=messages,
-            system=dynamic_system,
-            tools=self.tool_registry.get_schemas(),
-        )
+
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                return self.provider.chat(
+                    messages=messages,
+                    system=dynamic_system,
+                    tools=self.tool_registry.get_schemas(),
+                )
+            except (openai.APIConnectionError, openai.RateLimitError) as exc:
+                log_event(
+                    "llm_call_error",
+                    self.run_ctx,
+                    error=type(exc).__name__,
+                    message=str(exc),
+                    attempt=attempt + 1,
+                    max_attempts=max_attempts,
+                )
+                if attempt < max_attempts - 1:
+                    time.sleep(min(2**attempt, 30))
+                else:
+                    err_detail = f"{type(exc).__name__}: {exc}"
+                    msg = (
+                        f"[network_error] LLM call failed "
+                        f"after {max_attempts} attempts: {err_detail}"
+                    )
+                    return LLMResponse(
+                        text=msg,
+                        tool_calls=[],
+                        stop_reason="end_turn",
+                        assistant_message={
+                            "role": "assistant",
+                            "content": (
+                                f"[network_error] LLM call failed after {max_attempts} attempts"
+                            ),
+                        },
+                    )
+        # Unreachable: loop always returns on last attempt
+        raise RuntimeError("call_llm loop exited without returning")
 
     def _estimate_context_tokens(self, messages: list[dict]) -> int:
         prompt_text = "\n".join(self._message_text_for_budget(message) for message in messages)
