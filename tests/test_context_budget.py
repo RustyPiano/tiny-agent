@@ -34,7 +34,7 @@ class _CaptureProvider(BaseLLMProvider):
     def __init__(self):
         self.last_system: str = ""
 
-    def chat(self, messages, system, tools) -> LLMResponse:
+    def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
         _ = (messages, tools)
         self.last_system = system
         return LLMResponse(
@@ -65,7 +65,7 @@ def test_runtime_only_compacts_near_soft_limit(monkeypatch):
     provider = _CaptureProvider()
     runtime = AgentRuntime(
         provider=provider,
-        settings=type("S", (), {"max_turns": 20})(),
+        settings=type("S", (), {"max_turns": 20, "max_tokens": 16000})(),
         ctx=Context(initial_messages=[{"role": "user", "content": "short task"}]),
         tool_registry=_NoopRegistry(),
         session_store=_NoopStore(),
@@ -89,7 +89,7 @@ def test_runtime_budget_counts_structured_tool_result_payload(monkeypatch):
     large_payload = "x" * 5000
     runtime = AgentRuntime(
         provider=provider,
-        settings=type("S", (), {"max_turns": 20})(),
+        settings=type("S", (), {"max_turns": 20, "max_tokens": 16000})(),
         ctx=Context(
             initial_messages=[
                 {

@@ -32,6 +32,7 @@ class BaseLLMProvider(ABC):
         messages: list[dict],
         system: str,
         tools: list[dict],
+        max_tokens: int = 16000,
     ) -> LLMResponse:
         """
         发送对话，返回统一响应。

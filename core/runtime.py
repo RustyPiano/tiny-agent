@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+import anthropic
 import openai
 
 import config
@@ -65,6 +67,7 @@ class AgentRuntime:
         policy: RuntimePolicy | None = None,
         show_turns: bool = False,
         turn_printer: Callable[[str], None] | None = None,
+        ui_event_printer: Callable[[str], None] | None = None,
     ):
         self.provider = provider
         self.settings = settings
@@ -78,11 +81,14 @@ class AgentRuntime:
         self.policy = policy or DefaultRuntimePolicy()
         self.show_turns = show_turns
         self.turn_printer = turn_printer
+        self.ui_event_printer = ui_event_printer
         self.state = TurnState(turn=0)
         self._last_tool_statuses: list[str] = []
         self._last_executed_tools_count: int = 0
         self._finish_requested: bool = False
         self._finish_response: str = ""
+        self._hb_stop: threading.Event | None = None
+        self._hb_thread: threading.Thread | None = None
         allowed_tools: set[str] = set()
         if tool_registry is not None:
             list_tools = getattr(tool_registry, "list_tools", None)
@@ -100,6 +106,26 @@ class AgentRuntime:
                             allowed_tools.add(schema_name)
         self.security_guard = SecurityGuard(allowed_tools=allowed_tools)
 
+    def _start_heartbeat(self, tool_name: str, start_time: float) -> None:
+        if self.ui_event_printer is None:
+            return
+        self._hb_stop = threading.Event()
+        self._hb_thread = threading.Thread(
+            target=self._heartbeat_loop, args=(tool_name, start_time), daemon=True
+        )
+        self._hb_thread.start()
+
+    def _heartbeat_loop(self, tool_name: str, start_time: float) -> None:
+        while not self._hb_stop.wait(10):
+            elapsed = int(time.time() - start_time)
+            self.ui_event_printer(f"  ↳ {tool_name} 运行中 {elapsed}s…")
+
+    def _stop_heartbeat(self) -> None:
+        if self._hb_stop is not None:
+            self._hb_stop.set()
+        if self._hb_thread is not None:
+            self._hb_thread.join(timeout=1)
+
     def next_step(self, response: LLMResponse | None) -> Step:
         return self.policy.next_step(self.state.turn, self.settings.max_turns, response)
 
@@ -110,7 +136,8 @@ class AgentRuntime:
         estimated_tokens = self._estimate_context_tokens(messages)
         memory_text = self._load_memory_text()
         compacted_history = ""
-        if should_compact(estimated_tokens, config.CONTEXT_SOFT_LIMIT_TOKENS):
+        soft_limit = getattr(self.settings, "context_soft_limit_tokens", config.CONTEXT_SOFT_LIMIT_TOKENS)
+        if should_compact(estimated_tokens, soft_limit):
             compacted_history = self._compact_history(messages)
         dynamic_system = assemble_messages(
             static_system_prompt=self.system,
@@ -127,8 +154,14 @@ class AgentRuntime:
                     messages=messages,
                     system=dynamic_system,
                     tools=self.tool_registry.get_schemas(),
+                    max_tokens=self.settings.max_tokens,
                 )
-            except (openai.APIConnectionError, openai.RateLimitError) as exc:
+            except (
+                openai.APIConnectionError,
+                openai.RateLimitError,
+                anthropic.APIConnectionError,
+                anthropic.RateLimitError,
+            ) as exc:
                 log_event(
                     "llm_call_error",
                     self.run_ctx,
@@ -426,6 +459,10 @@ class AgentRuntime:
                 }
 
             log_event("tool_call", self.run_ctx, tool=tc.name, inputs=log_inputs)
+            if self.ui_event_printer is not None:
+                self.ui_event_printer(f"  • 工具 {tc.name} 开始")
+            tool_start = time.time()
+            self._start_heartbeat(tc.name, tool_start)
             try:
                 if tc.name == "run_bash":
                     with sandbox_cwd():
@@ -435,8 +472,16 @@ class AgentRuntime:
             except Exception as exc:
                 output = f"[tool_error] {type(exc).__name__}: {exc}"
                 tool_statuses.append(f"{tc.name}:error")
+                self._stop_heartbeat()
+                if self.ui_event_printer is not None:
+                    elapsed = time.time() - tool_start
+                    self.ui_event_printer(f"  ✗ {tc.name} 失败（{elapsed:.1f}s）")
             else:
                 tool_statuses.append(f"{tc.name}:ok")
+                self._stop_heartbeat()
+                if self.ui_event_printer is not None:
+                    elapsed = time.time() - tool_start
+                    self.ui_event_printer(f"  ✓ {tc.name} 完成（{elapsed:.1f}s）")
             results.append(self.provider.format_tool_result(tc.id, output))
             output_text = str(output)
             if (
@@ -483,14 +528,6 @@ class AgentRuntime:
             return True
         return decision.action == "NONE"
 
-    def _should_execute_react_action(self, response: LLMResponse) -> bool:
-        if response.tool_calls:
-            return False
-        decision = self.parse_react_decision(response.text)
-        if decision is None:
-            return False
-        return decision.action != "NONE"
-
     def persist_session(self) -> None:
         if self.session_id:
             self.session_store.save(self.session_id, self.ctx.snapshot(), self.provider_type)
@@ -507,11 +544,15 @@ class AgentRuntime:
             if step == Step.MAX_TURNS:
                 self.persist_session()
                 log_event("run_end", self.run_ctx, stop_reason="max_turns")
+                if self.ui_event_printer is not None:
+                    self.ui_event_printer(f"  ⚠ 达到最大轮次")
                 return f"[warn] 达到最大轮次 ({self.settings.max_turns})，任务可能未完成。"
             if step == Step.CALL_LLM:
                 self.state.turn += 1
                 self.run_ctx.turn = self.state.turn
                 log_event("turn_start", self.run_ctx)
+                if self.ui_event_printer is not None:
+                    self.ui_event_printer(f"  ▸ 第{self.state.turn}轮：分析中…")
                 response = self.call_llm()
                 self.state.response = response
                 log_event(
@@ -549,6 +590,8 @@ class AgentRuntime:
                 if self._finish_requested:
                     self.persist_session()
                     log_event("run_end", self.run_ctx, stop_reason="finish")
+                    if self.ui_event_printer is not None:
+                        self.ui_event_printer(f"  ✓ 任务完成")
                     return self._finish_response
                 self.state.react_format_retries = 0
                 packaged = self.provider.tool_results_as_message(results)
@@ -577,6 +620,17 @@ class AgentRuntime:
                         self.state.response = None
                         continue
                     if (
+                        react_decision is not None
+                        and react_decision.action == "NONE"
+                        and react_decision.thought.strip()
+                    ):
+                        self._print_turn_summary(current_response)
+                        self.persist_session()
+                        log_event("run_end", self.run_ctx, stop_reason="end_turn")
+                        if self.ui_event_printer is not None:
+                            self.ui_event_printer(f"  ✓ 任务完成")
+                        return react_decision.thought
+                    if (
                         react_decision is None
                         and parse_error
                         and self._looks_like_react_json(current_response.text)
@@ -596,9 +650,11 @@ class AgentRuntime:
                         self.ctx.add_user(self._end_turn_parse_error_observation(parse_error))
                         self.state.response = None
                         continue
-                    self.state.end_turn_react_parse_retries = 0
-                    self._print_turn_summary(current_response)
+                self.state.end_turn_react_parse_retries = 0
+                self._print_turn_summary(current_response)
                 self.persist_session()
                 log_event("run_end", self.run_ctx, stop_reason="end_turn")
+                if self.ui_event_printer is not None:
+                    self.ui_event_printer(f"  ✓ 任务完成")
                 return self.final_response_text()
             raise RuntimeError(f"Unhandled runtime step: {step!r}")

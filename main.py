@@ -102,11 +102,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Local Agent Framework")
     parser.add_argument("--session", default=None, help="会话 ID，用于持久化历史")
     parser.add_argument("--skills", default="", help="逗号分隔的 skill 名称")
-    parser.add_argument("--verbose", action="store_true", help="打印工具调用详情")
+    parser.add_argument("--verbose", action="store_true", help="已弃用，不再生效")
     parser.add_argument("--provider", default=None, help="llm provider 类型: anthropic | openai")
     parser.add_argument("--model", default=None, help="模型名称")
     parser.add_argument("--base-url", default=None, dest="base_url", help="本地模型 base_url")
-    parser.add_argument("--show-turns", action="store_true", help="输出每轮 stop/tools 摘要")
+    parser.add_argument("--show-turns", action="store_true", help="已弃用，等效于 --ui detailed")
+    parser.add_argument(
+        "--ui",
+        default=None,
+        choices=["concise", "detailed"],
+        help="界面模式: concise（默认简洁）| detailed（详细）",
+    )
     parser.add_argument(
         "--log-format",
         default="text",
@@ -115,13 +121,28 @@ def main() -> None:
     )
     parser.add_argument(
         "--log-level",
-        default="INFO",
-        help="日志级别: DEBUG | INFO | WARNING | ERROR",
+        default=None,
+        help="日志级别: DEBUG | INFO | WARNING | ERROR（concise 模式默认 WARNING）",
     )
     args = parser.parse_args()
 
+    # Resolve UI mode: --ui takes priority, then --show-turns fallback, then default concise
+    if args.ui is not None:
+        ui_mode = args.ui
+    elif args.show_turns:
+        ui_mode = "detailed"
+    else:
+        ui_mode = "concise"
+
+    show_turns = ui_mode == "detailed"
+    turn_printer = print if show_turns else lambda *a, **k: None
+    ui_event_printer = print if ui_mode == "concise" else None
+
+    # concise 模式默认 WARNING 级别，避免 INFO 日志淹没界面
+    log_level = args.log_level if args.log_level is not None else ("INFO" if show_turns else "WARNING")
+
     # 配置日志
-    setup_logging(level=args.log_level, fmt=args.log_format)
+    setup_logging(level=log_level, fmt=args.log_format)
 
     # 从环境变量构建，再用命令行参数覆盖
     settings = AgentSettings.from_env()
@@ -144,8 +165,11 @@ def main() -> None:
     provider = create_provider(settings.to_provider_config())
 
     skills = [s.strip() for s in args.skills.split(",") if s.strip()]
-    log_event("agent_start", RunContext(), provider=settings.provider_type, model=settings.model)
-    print("Agent 已启动，输入任务（Ctrl+C 退出）：\n")
+    if ui_mode == "concise":
+        print(f"\nAgent 已启动 [{settings.provider_type}/{settings.model}]，输入任务（Ctrl+C 退出）\n")
+    else:
+        log_event("agent_start", RunContext(), provider=settings.provider_type, model=settings.model)
+        print("Agent 已启动，输入任务（Ctrl+C 退出）：\n")
 
     while True:
         try:
@@ -153,19 +177,27 @@ def main() -> None:
             if not user_input:
                 continue
             run_ctx = RunContext(session_id=args.session)
-            log_event("session_start", run_ctx, input=user_input[:100])
+            if ui_mode == "detailed":
+                log_event("session_start", run_ctx, input=user_input[:100])
+            if ui_mode == "concise":
+                print("\n  ▸ 开始处理")
             result = run(
                 user_input,
                 settings=settings,
                 provider=provider,
                 session_id=args.session,
                 skills=skills,
-                verbose=args.verbose,
-                show_turns=args.show_turns,
-                turn_printer=print,
+                show_turns=show_turns,
+                turn_printer=turn_printer,
                 run_ctx=run_ctx,
+                ui_event_printer=ui_event_printer,
             )
-            print(f"\nAgent: {result}\n")
+            if ui_mode == "concise":
+                print(f"\n{'─'*40}")
+                print(result)
+                print(f"{'─'*40}\n")
+            else:
+                print(f"\nAgent: {result}\n")
         except KeyboardInterrupt:
             print("\n退出。")
             break

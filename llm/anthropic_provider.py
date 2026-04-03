@@ -1,7 +1,6 @@
 # llm/anthropic_provider.py
 import anthropic as _anthropic
 
-from config import MAX_TOKENS
 from llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
 
@@ -10,10 +9,10 @@ class AnthropicProvider(BaseLLMProvider):
         self.model = model
         self.client = _anthropic.Anthropic(api_key=api_key)
 
-    def chat(self, messages, system, tools) -> LLMResponse:
+    def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
         resp = self.client.messages.create(
             model=self.model,
-            max_tokens=MAX_TOKENS,
+            max_tokens=max_tokens,
             temperature=0.0,
             system=system,
             tools=tools or [],

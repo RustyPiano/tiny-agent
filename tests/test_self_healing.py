@@ -10,7 +10,7 @@ class SequenceProvider(BaseLLMProvider):
         self._responses = responses
         self._call_index = 0
 
-    def chat(self, messages, system, tools) -> LLMResponse:
+    def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
         _ = (messages, system, tools)
         if self._call_index >= len(self._responses):
             raise IndexError("SequenceProvider: 响应已用完")

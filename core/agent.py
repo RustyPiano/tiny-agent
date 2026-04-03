@@ -71,10 +71,10 @@ def run(
     provider: BaseLLMProvider | None = None,
     session_id: str | None = None,
     skills: list[str] | None = None,
-    verbose: bool = False,
     show_turns: bool = False,
     turn_printer=None,
     run_ctx: RunContext | None = None,
+    ui_event_printer=None,
 ) -> str:
     """执行一次完整的 Agent 任务。"""
     return _run_with_runtime(
@@ -83,10 +83,10 @@ def run(
         provider,
         session_id,
         skills,
-        verbose,
         show_turns,
         turn_printer,
         run_ctx,
+        ui_event_printer,
     )
 
 
@@ -96,13 +96,11 @@ def _run_with_runtime(
     provider: BaseLLMProvider | None,
     session_id: str | None,
     skills: list[str] | None,
-    verbose: bool,
     show_turns: bool,
     turn_printer,
     run_ctx: RunContext | None,
+    ui_event_printer=None,
 ) -> str:
-    # Backward-compatible no-op: verbose 已迁移到结构化日志体系。
-    _ = verbose
     settings, provider, run_ctx = _resolve_settings_provider_runctx(
         settings, provider, run_ctx, session_id
     )
@@ -124,5 +122,6 @@ def _run_with_runtime(
         provider_type=provider_type,
         show_turns=show_turns,
         turn_printer=turn_printer,
+        ui_event_printer=ui_event_printer,
     )
     return runtime.run()

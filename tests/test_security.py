@@ -49,7 +49,7 @@ def test_runtime_blocks_non_whitelisted_tool_call() -> None:
     from llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
     class NoopProvider(BaseLLMProvider):
-        def chat(self, messages, system, tools) -> LLMResponse:
+        def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
             raise AssertionError("should not call provider.chat")
 
         def format_tool_result(self, tool_call_id: str, content: str) -> dict:

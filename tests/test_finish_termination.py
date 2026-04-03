@@ -18,7 +18,7 @@ class CountingProvider(BaseLLMProvider):
         self._call_index = 0
         self.call_count = 0
 
-    def chat(self, messages, system, tools) -> LLMResponse:
+    def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
         self.call_count += 1
         if self._call_index >= len(self._responses):
             n = self._call_index

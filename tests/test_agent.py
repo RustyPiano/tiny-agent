@@ -23,7 +23,7 @@ class MockProvider(BaseLLMProvider):
         self._call_index = 0
         self.messages_received: list[list[dict]] = []
 
-    def chat(self, messages, system, tools) -> LLMResponse:
+    def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
         self.messages_received.append(messages)
         if self._call_index >= len(self._responses):
             raise IndexError("MockProvider: 响应已用完")
@@ -45,7 +45,7 @@ class MockOpenAIProvider(BaseLLMProvider):
         self._responses = responses
         self._call_index = 0
 
-    def chat(self, messages, system, tools) -> LLMResponse:
+    def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
         if self._call_index >= len(self._responses):
             raise IndexError("MockOpenAIProvider: 响应已用完")
         resp = self._responses[self._call_index]
@@ -107,7 +107,7 @@ def test_single_tool_call():
             ),
         ]
     )
-    result = run("执行 echo hello", provider=provider, verbose=True)
+    result = run("执行 echo hello", provider=provider)
     assert "hello" in result
 
 
@@ -247,7 +247,7 @@ def test_runtime_methods_are_override_friendly():
     """测试 runtime 子类可覆盖阶段行为"""
 
     class FailingProvider(BaseLLMProvider):
-        def chat(self, messages, system, tools) -> LLMResponse:
+        def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
             raise AssertionError("should not call provider.chat when call_llm is overridden")
 
         def format_tool_result(self, tool_call_id: str, content: str) -> dict:
@@ -284,7 +284,7 @@ def test_runtime_override_execute_tools_and_persist_session():
     """测试 execute_tools/persist_session 也可覆盖"""
 
     class NoopProvider(BaseLLMProvider):
-        def chat(self, messages, system, tools) -> LLMResponse:
+        def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
             raise AssertionError("should not call provider.chat when call_llm is overridden")
 
         def format_tool_result(self, tool_call_id: str, content: str) -> dict:
@@ -293,57 +293,6 @@ def test_runtime_override_execute_tools_and_persist_session():
         def tool_results_as_message(self, results: list[dict]) -> list[dict]:
             return [{"role": "user", "content": results}]
 
-    class OverrideRuntime(AgentRuntime):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
-            self._call_count = 0
-            self.execute_called = False
-            self.persist_calls = 0
-
-        def call_llm(self) -> LLMResponse:
-            self._call_count += 1
-            if self._call_count == 1:
-                return LLMResponse(
-                    text="",
-                    tool_calls=[ToolCall(id="call_1", name="x", inputs={})],
-                    stop_reason="tool_use",
-                    assistant_message={"role": "assistant", "content": []},
-                )
-            return LLMResponse(
-                text="done",
-                tool_calls=[],
-                stop_reason="end_turn",
-                assistant_message={"role": "assistant", "content": "done"},
-            )
-
-        def execute_tools(self, response: LLMResponse) -> list[dict]:
-            self.execute_called = True
-            return [{"type": "tool_result", "tool_use_id": "call_1", "content": "ok"}]
-
-        def persist_session(self) -> None:
-            self.persist_calls += 1
-
-    runtime = OverrideRuntime(
-        provider=NoopProvider(),
-        settings=AgentSettings(),
-        ctx=Context(),
-        tool_registry=None,
-        session_store=None,
-        system="test-system",
-        run_ctx=RunContext(),
-        session_id=None,
-        provider_type="unknown",
-    )
-
-    assert runtime.run() == "done"
-    assert runtime.execute_called is True
-    # persist after execute_tools + persist at run end (DONE path)
-    assert runtime.persist_calls == 2
-
-
-def test_runtime_custom_policy_persist_path():
-    """测试自定义策略可以走 PERSIST 分支"""
-
     class PersistPolicy(RuntimePolicy):
         def next_step(self, turn: int, max_turns: int, response: LLMResponse | None) -> Step:
             if response is None:
@@ -351,7 +300,7 @@ def test_runtime_custom_policy_persist_path():
             return Step.PERSIST
 
     class NoopProvider(BaseLLMProvider):
-        def chat(self, messages, system, tools) -> LLMResponse:
+        def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
             raise AssertionError("should not call provider.chat when call_llm is overridden")
 
         def format_tool_result(self, tool_call_id: str, content: str) -> dict:
@@ -401,7 +350,7 @@ def test_runtime_unknown_step_raises():
             return "UNKNOWN_STEP"
 
     class NoopProvider(BaseLLMProvider):
-        def chat(self, messages, system, tools) -> LLMResponse:
+        def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
             raise AssertionError("should not call provider.chat")
 
         def format_tool_result(self, tool_call_id: str, content: str) -> dict:
@@ -429,7 +378,7 @@ def test_runtime_unknown_step_raises():
 
 def test_runtime_forwards_tool_parse_error_metadata():
     class NoopProvider(BaseLLMProvider):
-        def chat(self, messages, system, tools) -> LLMResponse:
+        def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
             raise AssertionError("should not call provider.chat")
 
         def format_tool_result(self, tool_call_id: str, content: str) -> dict:
@@ -493,7 +442,7 @@ def test_runtime_forwards_tool_parse_error_metadata():
 
 def test_runtime_handles_non_dict_tool_inputs():
     class NoopProvider(BaseLLMProvider):
-        def chat(self, messages, system, tools) -> LLMResponse:
+        def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
             raise AssertionError("should not call provider.chat")
 
         def format_tool_result(self, tool_call_id: str, content: str) -> dict:

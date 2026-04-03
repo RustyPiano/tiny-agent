@@ -3,7 +3,6 @@ import json
 
 from openai import OpenAI
 
-from config import MAX_TOKENS
 from llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
 
@@ -31,7 +30,7 @@ class OpenAIProvider(BaseLLMProvider):
 
         self.client = OpenAI(**client_kwargs)
 
-    def chat(self, messages, system, tools) -> LLMResponse:
+    def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
         # OpenAI system 放在 messages 首条
         full_messages = [{"role": "system", "content": system}] + messages
 
@@ -40,9 +39,9 @@ class OpenAIProvider(BaseLLMProvider):
 
         kwargs: dict = dict(model=self.model, messages=full_messages, temperature=0.0)
         if getattr(self, "_use_max_completion_tokens", False):
-            kwargs["max_completion_tokens"] = MAX_TOKENS
+            kwargs["max_completion_tokens"] = max_tokens
         else:
-            kwargs["max_tokens"] = MAX_TOKENS
+            kwargs["max_tokens"] = max_tokens
         if oai_tools:
             kwargs["tools"] = oai_tools
 

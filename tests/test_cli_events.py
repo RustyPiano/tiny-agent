@@ -10,7 +10,7 @@ from llm.base import BaseLLMProvider, LLMResponse
 
 
 class _NoopProvider(BaseLLMProvider):
-    def chat(self, messages, system, tools) -> LLMResponse:
+    def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
         raise AssertionError("chat should be overridden in this test")
 
     def format_tool_result(self, tool_call_id: str, content: str) -> dict:
@@ -38,7 +38,7 @@ class _SequenceProvider(BaseLLMProvider):
         self._responses = responses
         self._index = 0
 
-    def chat(self, messages, system, tools) -> LLMResponse:
+    def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
         _ = (messages, system, tools)
         if self._index >= len(self._responses):
             raise IndexError("SequenceProvider: responses exhausted")

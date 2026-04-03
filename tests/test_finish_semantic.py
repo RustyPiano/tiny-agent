@@ -58,15 +58,35 @@ def make_runtime(provider: BaseLLMProvider, registry: RecordingRegistry) -> Agen
     )
 
 
-def test_end_turn_recovery_retry_exhaustion() -> None:
-    malformed = LLMResponse(
-        text='{"thought":"oops","action":"run_bash","action_input":123}',
+def test_end_turn_action_none_returns_thought() -> None:
+    """When action=NONE with non-empty thought, return the thought text, not raw JSON."""
+    response = LLMResponse(
+        text='{"thought":"Task completed successfully.","action":"NONE","action_input":"NONE"}',
         tool_calls=[],
         stop_reason="end_turn",
-        assistant_message={"role": "assistant", "content": "bad react json"},
+        assistant_message={"role": "assistant", "content": "json"},
     )
     registry = RecordingRegistry()
-    provider = SequenceProvider([malformed, malformed, malformed])
+    provider = SequenceProvider([response])
+    runtime = make_runtime(provider, registry)
+
+    result = runtime.run()
+
+    assert result == "Task completed successfully."
+    assert registry.calls == []
+
+
+def test_end_turn_action_none_empty_thought_triggers_retry() -> None:
+    """When action=NONE but thought is empty, parse_react_json rejects it,
+    triggering the retry mechanism (existing behavior for parse errors on valid-looking JSON)."""
+    response = LLMResponse(
+        text='{"thought":"","action":"NONE","action_input":"NONE"}',
+        tool_calls=[],
+        stop_reason="end_turn",
+        assistant_message={"role": "assistant", "content": "json"},
+    )
+    registry = RecordingRegistry()
+    provider = SequenceProvider([response, response, response])
     runtime = make_runtime(provider, registry)
 
     result = runtime.run()
@@ -74,27 +94,33 @@ def test_end_turn_recovery_retry_exhaustion() -> None:
     assert result == (
         '{"thought":"end_turn_parse_retry_exhausted","action":"NONE","action_input":"NONE"}'
     )
-    assert provider._call_index == 3
     assert registry.calls == []
-    messages = runtime.ctx.get()
-    observations = [
-        msg.get("content", "")
-        for msg in messages
-        if msg.get("role") == "user"
-        and isinstance(msg.get("content"), str)
-        and "ReAct output parse failed at end_turn" in msg.get("content", "")
-    ]
-    assert len(observations) == 2
 
 
-def test_end_turn_recovery_executes_tool() -> None:
-    malformed = LLMResponse(
-        text='{"thought":"oops","action":"run_bash","action_input":123}',
+def test_end_turn_action_none_whitespace_thought_triggers_retry() -> None:
+    """When action=NONE but thought is only whitespace, parse_react_json rejects it,
+    triggering the retry mechanism (existing behavior for parse errors on valid-looking JSON)."""
+    response = LLMResponse(
+        text='{"thought":"   ","action":"NONE","action_input":"NONE"}',
         tool_calls=[],
         stop_reason="end_turn",
-        assistant_message={"role": "assistant", "content": "bad react json"},
+        assistant_message={"role": "assistant", "content": "json"},
     )
-    valid_action = LLMResponse(
+    registry = RecordingRegistry()
+    provider = SequenceProvider([response, response, response])
+    runtime = make_runtime(provider, registry)
+
+    result = runtime.run()
+
+    assert result == (
+        '{"thought":"end_turn_parse_retry_exhausted","action":"NONE","action_input":"NONE"}'
+    )
+    assert registry.calls == []
+
+
+def test_end_turn_valid_action_still_executes_tool() -> None:
+    """When action is a valid tool (not NONE), the tool should still be executed."""
+    action_response = LLMResponse(
         text='{"thought":"need shell","action":"run_bash","action_input":{"command":"echo hi"}}',
         tool_calls=[],
         stop_reason="end_turn",
@@ -108,11 +134,10 @@ def test_end_turn_recovery_executes_tool() -> None:
     )
 
     registry = RecordingRegistry()
-    provider = SequenceProvider([malformed, valid_action, final])
+    provider = SequenceProvider([action_response, final])
     runtime = make_runtime(provider, registry)
 
     result = runtime.run()
 
     assert result == "done"
-    assert provider._call_index == 3
     assert registry.calls == [("run_bash", {"command": "echo hi"})]

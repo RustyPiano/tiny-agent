@@ -12,7 +12,7 @@ class _CaptureProvider(BaseLLMProvider):
     def __init__(self):
         self.last_system: str = ""
 
-    def chat(self, messages, system, tools) -> LLMResponse:
+    def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
         _ = (messages, tools)
         self.last_system = system
         return LLMResponse(
@@ -43,7 +43,7 @@ def _build_runtime(messages: list[dict]) -> tuple[AgentRuntime, _CaptureProvider
     provider = _CaptureProvider()
     runtime = AgentRuntime(
         provider=provider,
-        settings=type("S", (), {"max_turns": 20})(),
+        settings=type("S", (), {"max_turns": 20, "max_tokens": 16000})(),
         ctx=Context(initial_messages=messages),
         tool_registry=_NoopRegistry(),
         session_store=_NoopStore(),
@@ -192,7 +192,7 @@ def test_runtime_prefers_settings_workspace_memory_before_global(tmp_path: Path,
     provider = _CaptureProvider()
     runtime = AgentRuntime(
         provider=provider,
-        settings=type("S", (), {"max_turns": 20, "workspace_root": settings_root})(),
+        settings=type("S", (), {"max_turns": 20, "max_tokens": 16000, "workspace_root": settings_root})(),
         ctx=Context(initial_messages=[{"role": "user", "content": "hello"}]),
         tool_registry=_NoopRegistry(),
         session_store=_NoopStore(),
