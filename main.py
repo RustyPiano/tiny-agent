@@ -169,6 +169,10 @@ def main() -> None:
         except KeyboardInterrupt:
             print("\n退出。")
             break
+        except Exception as e:
+            log_event("repl_error", RunContext(), error=str(e), error_type=type(e).__name__)
+            print(f"\n[错误] 发生异常: {e}\n")
+            continue
 
 
 if __name__ == "__main__":
