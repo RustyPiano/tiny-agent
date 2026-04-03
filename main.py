@@ -19,6 +19,7 @@ from extensions.loader import load_extensions
 from llm.factory import create_provider
 from skills import discover_skills
 from tools.bash_tool import register_bash_tool
+from tools.edit_file_tool import register_edit_file_tool
 from tools.file_tools import register_file_tools
 from tools.finish_tool import register_finish_tool
 from tools.grep_tool import register_grep_tool
@@ -73,6 +74,7 @@ def bootstrap(settings: AgentSettings) -> None:
         **event_fields,
     )
     register_file_tools()
+    register_edit_file_tool()
     register_bash_tool()
     register_skill_tool()
     register_summarize_tool()
