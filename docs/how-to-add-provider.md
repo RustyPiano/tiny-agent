@@ -6,11 +6,11 @@
 
 ### 1. 创建 Provider 类
 
-在 `llm/` 目录下创建新文件，例如 `llm/gemini_provider.py`:
+在 `agent_framework/llm/` 目录下创建新文件，例如 `agent_framework/llm/gemini_provider.py`:
 
 ```python
-# llm/gemini_provider.py
-from llm.base import BaseLLMProvider, LLMResponse, ToolCall
+# agent_framework/llm/gemini_provider.py
+from agent_framework.llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
 
 class GeminiProvider(BaseLLMProvider):
@@ -76,18 +76,18 @@ class GeminiProvider(BaseLLMProvider):
 
 ### 2. 注册到 Factory
 
-在 `llm/factory.py` 中添加新 provider:
+在 `agent_framework/llm/factory.py` 中添加新 provider:
 
 ```python
 def create_provider(cfg: dict) -> BaseLLMProvider:
     t = cfg.get("type", "anthropic")
 
     if t == "anthropic":
-        from llm.anthropic_provider import AnthropicProvider
+        from agent_framework.llm.anthropic_provider import AnthropicProvider
         return AnthropicProvider(model=cfg["model"], api_key=cfg.get("api_key"))
 
     if t == "openai":
-        from llm.openai_provider import OpenAIProvider
+        from agent_framework.llm.openai_provider import OpenAIProvider
         return OpenAIProvider(
             model=cfg["model"],
             base_url=cfg.get("base_url"),
@@ -96,7 +96,7 @@ def create_provider(cfg: dict) -> BaseLLMProvider:
 
     # 添加新 provider
     if t == "gemini":
-        from llm.gemini_provider import GeminiProvider
+        from agent_framework.llm.gemini_provider import GeminiProvider
         return GeminiProvider(model=cfg["model"], api_key=cfg.get("api_key"))
 
     raise ValueError(f"未知 provider 类型: {t!r}，支持: anthropic, openai, gemini")
@@ -104,7 +104,7 @@ def create_provider(cfg: dict) -> BaseLLMProvider:
 
 ### 3. 更新配置校验
 
-在 `config.py` 的 `AgentSettings.validate()` 中添加支持的 provider:
+在 `agent_framework/_config.py` 的 `AgentSettings.validate()` 中添加支持的 provider:
 
 ```python
 def validate(self) -> list[str]:
@@ -220,14 +220,14 @@ class ToolCall:
 Ollama 兼容 OpenAI API，所以可以直接使用 OpenAI provider:
 
 ```bash
-python main.py --provider openai --model qwen2.5:14b --base-url http://localhost:11434/v1
+agent --provider openai --model qwen2.5:14b --base-url http://localhost:11434/v1
 ```
 
 如果需要单独实现，可以创建:
 
 ```python
-# llm/ollama_provider.py
-from llm.openai_provider import OpenAIProvider
+# agent_framework/llm/ollama_provider.py
+from agent_framework.llm.openai_provider import OpenAIProvider
 
 
 class OllamaProvider(OpenAIProvider):
@@ -242,8 +242,8 @@ class OllamaProvider(OpenAIProvider):
 创建测试文件 `tests/test_gemini_provider.py`:
 
 ```python
-from llm.gemini_provider import GeminiProvider
-from llm.base import LLMResponse
+from agent_framework.llm.gemini_provider import GeminiProvider
+from agent_framework.llm.base import LLMResponse
 
 
 def test_gemini_chat():
@@ -280,7 +280,7 @@ def test_gemini_format_tool_result():
 export GEMINI_API_KEY=xxx
 ```
 
-在 `config.py` 中添加:
+在 `agent_framework/_config.py` 中添加:
 
 ```python
 @classmethod

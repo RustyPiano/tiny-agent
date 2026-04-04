@@ -2,11 +2,14 @@
 """
 Agent Framework 入口。
 用法：
-    python main.py
-    python main.py --session my_project --skills coding,project_explorer
-    python main.py --provider openai --model gpt-4o
-    python main.py --provider openai --model qwen2.5:14b --base-url http://localhost:11434/v1
-    python main.py --log-format json
+    agent
+    agent --session my_project --skills coding,project_explorer
+    agent --provider openai --model gpt-4o
+    agent --provider openai --model qwen2.5:14b --base-url http://localhost:11434/v1
+    agent --log-format json
+
+    # 或
+    python -m agent_framework
 """
 
 import argparse

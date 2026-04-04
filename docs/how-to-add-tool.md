@@ -6,11 +6,11 @@
 
 ### 1. 创建工具模块
 
-在 `tools/` 目录下创建新文件，例如 `tools/my_tool.py`:
+在 `agent_framework/tools/` 目录下创建新文件，例如 `agent_framework/tools/my_tool.py`:
 
 ```python
-# tools/my_tool.py
-from tools.registry import register
+# agent_framework/tools/my_tool.py
+from agent_framework.tools.registry import register
 
 
 def my_function(param1: str, param2: int = 10) -> str:
@@ -36,11 +36,11 @@ def register_my_tool() -> None:
 
 推荐方式（PoC）：使用扩展目录自动发现，不修改核心文件。
 
-在 `extensions/tools/` 下放置模块，并提供模块级 `register()` 合约函数：
+在 `agent_framework/extensions/tools/` 下放置模块，并提供模块级 `register()` 合约函数：
 
 ```python
-# extensions/tools/my_tool.py
-from tools.registry import register as register_tool
+# agent_framework/extensions/tools/my_tool.py
+from agent_framework.tools.registry import register as register_tool
 
 
 def my_function(param1: str, param2: int = 10) -> str:
@@ -60,7 +60,7 @@ def register() -> None:
     )
 ```
 
-兼容方式：你仍可在 `main.py` 中手动注册，但不推荐。
+兼容方式：你仍可在 `agent_framework/main.py` 中手动注册，但不推荐。
 
 ## 详细说明
 
@@ -111,8 +111,8 @@ return "[blocked] 操作被拒绝"
 ### 示例 1: 简单计算工具
 
 ```python
-# tools/calc_tool.py
-from tools.registry import register
+# agent_framework/tools/calc_tool.py
+from agent_framework.tools.registry import register
 
 
 def calculate(expression: str) -> str:
@@ -143,8 +143,8 @@ def register_calc_tool() -> None:
 ### 示例 2: 带可选参数的工具
 
 ```python
-# tools/search_tool.py
-from tools.registry import register
+# agent_framework/tools/search_tool.py
+from agent_framework.tools.registry import register
 
 
 def search(query: str, limit: int = 5, case_sensitive: bool = False) -> str:
@@ -184,7 +184,7 @@ def register_search_tool() -> None:
 创建测试文件 `tests/test_my_tool.py`:
 
 ```python
-from tools.my_tool import my_function
+from agent_framework.tools.my_tool import my_function
 
 
 def test_my_function():

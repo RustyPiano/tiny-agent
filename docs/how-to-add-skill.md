@@ -33,7 +33,7 @@ description: 审查代码改动并给出可执行改进建议。
 然后直接运行：
 
 ```bash
-python main.py
+agent
 ```
 
 启动后框架会自动发现该 skill，并把 `name + description` 注入 `Available Skills`。

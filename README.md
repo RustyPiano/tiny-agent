@@ -19,8 +19,11 @@ pip install -e .
 # 配置 API Key
 export ANTHROPIC_API_KEY=xxx
 
-# 运行
-python main.py
+# 运行（推荐）
+agent
+
+# 或模块方式
+python -m agent_framework
 ```
 
 运行后应看到类似输出：
@@ -35,58 +38,52 @@ Agent 已启动，输入任务（Ctrl+C 退出）：
 
 ```bash
 # 基本用法
-python main.py
+agent
 
 # 使用 OpenAI provider
-python main.py --provider openai --model gpt-4o
+agent --provider openai --model gpt-4o
 
 # 使用本地模型 (Ollama)
-python main.py --provider openai --model qwen2.5:14b --base-url http://localhost:11434/v1
+agent --provider openai --model qwen2.5:14b --base-url http://localhost:11434/v1
 
 # 预加载 skills（可选；skills 名称来自已发现目录）
-python main.py --skills code-review,safe-ops
+agent --skills code-review,safe-ops
 
 # 持久化会话
-python main.py --session my_project
+agent --session my_project
+
+# 界面模式
+agent --ui concise
+agent --ui detailed
 
 # JSON 日志格式
-python main.py --log-format json --log-level DEBUG
+agent --log-format json --log-level DEBUG
 ```
 
 ## 架构
 
 ```
 agent-framework/
-├── core/                   # 核心组件
-│   ├── agent.py            # ReAct 主循环
-│   ├── context.py          # 对话上下文管理
-│   ├── logging.py          # 结构化日志
-│   └── prompt_builder.py   # System prompt 构建
-├── llm/                    # Provider 抽象层
-│   ├── base.py             # BaseLLMProvider 抽象类
-│   ├── factory.py          # Provider 工厂
-│   ├── anthropic_provider.py
-│   └── openai_provider.py
-├── tools/                  # 工具系统
-│   ├── registry.py         # 工具注册中心
-│   ├── bash_tool.py        # Shell 命令执行
-│   └── file_tools.py       # 文件读写
-├── skills/                 # Skill 系统（动态发现 + prompt 注入）
-│   ├── registry.py         # Skill 发现与注册中心
-│   └── __init__.py
-├── sessions/               # 会话持久化
-│   ├── store.py            # 会话存储
-│   └── migrations.py       # 版本迁移
-├── config.py               # 配置集中化
-└── main.py                 # 入口
+├── agent_framework/
+│   ├── __main__.py         # python -m agent_framework 入口
+│   ├── main.py             # CLI 入口（project.scripts: agent）
+│   ├── _config.py          # 配置集中化
+│   ├── core/               # 核心组件
+│   ├── llm/                # Provider 抽象层
+│   ├── tools/              # 工具系统
+│   ├── skills/             # Skill 系统
+│   ├── sessions/           # 会话持久化
+│   └── extensions/         # 扩展加载器与内置扩展示例
+├── tests/
+└── pyproject.toml
 ```
 
 ### 核心概念
 
-- **ReAct 循环**: `core/agent.py` 实现 Reasoning-Acting 循环，LLM 决定调用工具或直接回答
-- **Provider 抽象**: `llm/base.py` 定义统一接口，屏蔽 Anthropic/OpenAI API 差异
-- **工具注册**: `tools/registry.py` 提供声明式工具注册，自动转换为 LLM schema
-- **Skill 注入**: `skills/` 动态注入 prompt 片段，扩展 Agent 能力
+- **ReAct 循环**: `agent_framework/core/agent.py` 实现 Reasoning-Acting 循环
+- **Provider 抽象**: `agent_framework/llm/base.py` 定义统一接口
+- **工具注册**: `agent_framework/tools/registry.py` 提供声明式工具注册
+- **Skill 注入**: `agent_framework/skills/` 动态注入 prompt 片段
 
 ## LiteAgent 哲学对齐
 
@@ -106,8 +103,8 @@ agent-framework/
 
 框架会在启动时按约定目录尝试加载扩展模块：
 
-- `extensions/tools/*.py`
-- `extensions/providers/*.py`
+- `agent_framework/extensions/tools/*.py`
+- `agent_framework/extensions/providers/*.py`
 
 扩展模块需要提供模块级 `register()` 合约函数，加载器会导入模块后调用该函数完成注册。
 
