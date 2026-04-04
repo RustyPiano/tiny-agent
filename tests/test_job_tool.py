@@ -241,3 +241,36 @@ def test_start_job_rejects_when_running_jobs_exceed_cap(monkeypatch, tmp_path) -
     assert second["error"] == "too_many_running_jobs"
 
     _ = cancel_job(first["job_id"])
+
+
+def test_cleanup_trims_terminal_records_to_max_cap(monkeypatch, tmp_path) -> None:
+    from agent_framework.tools import job_tool
+
+    class _DoneProc:
+        def __init__(self, pid: int):
+            self.pid = pid
+
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr(job_tool, "_MAX_JOB_RECORDS", 2)
+    monkeypatch.setattr(job_tool, "_TERMINAL_JOB_TTL_SEC", 999999.0)
+    monkeypatch.setattr(job_tool, "_JOBS", {})
+
+    now = time.time()
+    for i in range(3):
+        log_path = tmp_path / f"job-{i}.log"
+        log_path.write_text("x", encoding="utf-8")
+        job_tool._JOBS[f"job_{i}"] = job_tool._JobRecord(
+            job_id=f"job_{i}",
+            process=_DoneProc(1000 + i),
+            started_at=now - (10 + i),
+            log_path=str(log_path),
+            finished_at=now - (5 + i),
+        )
+
+    with job_tool._LOCK:
+        job_tool._cleanup_jobs_locked()
+        remaining = len(job_tool._JOBS)
+
+    assert remaining == 2

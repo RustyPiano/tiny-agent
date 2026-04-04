@@ -84,16 +84,6 @@ def _cleanup_jobs_locked() -> None:
         except Exception:
             pass
 
-
-def _running_jobs_count_locked() -> int:
-    running = 0
-    for record in _JOBS.values():
-        if record.process.poll() is None:
-            running += 1
-        elif record.finished_at is None:
-            record.finished_at = time.time()
-    return running
-
     if len(_JOBS) <= _MAX_JOB_RECORDS:
         return
 
@@ -112,6 +102,16 @@ def _running_jobs_count_locked() -> int:
             os.remove(record.log_path)
         except Exception:
             pass
+
+
+def _running_jobs_count_locked() -> int:
+    running = 0
+    for record in _JOBS.values():
+        if record.process.poll() is None:
+            running += 1
+        elif record.finished_at is None:
+            record.finished_at = time.time()
+    return running
 
 
 def start_job(command: str, workdir: str | None = None) -> str:
