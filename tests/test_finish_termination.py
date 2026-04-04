@@ -352,6 +352,51 @@ def test_finish_via_react_json_fallback_terminates():
     assert result == "react finish done"
 
 
+def test_finish_via_end_turn_react_action_terminates_immediately():
+    """end_turn + ReAct action=finish should terminate without extra LLM calls."""
+
+    finish_registry = type(
+        "EndTurnReactFinishRegistry",
+        (),
+        {
+            "execute": lambda self, name, inputs: json.dumps(
+                {"response": "end_turn react finish done"}, ensure_ascii=False
+            ),
+            "get_schemas": lambda self: [{"name": "finish"}],
+        },
+    )()
+
+    provider = CountingProvider(
+        [
+            LLMResponse(
+                text=json.dumps(
+                    {
+                        "thought": "I can finish now",
+                        "action": "finish",
+                        "action_input": {"response": "end_turn react finish done"},
+                    },
+                    ensure_ascii=False,
+                ),
+                tool_calls=[],
+                stop_reason="end_turn",
+                assistant_message={"role": "assistant", "content": []},
+            ),
+            LLMResponse(
+                text="should not be reached",
+                tool_calls=[],
+                stop_reason="end_turn",
+                assistant_message={"role": "assistant", "content": "should not be reached"},
+            ),
+        ]
+    )
+
+    runtime = _make_runtime(provider, finish_registry)
+    result = runtime.run()
+
+    assert provider.call_count == 1, "Should NOT call LLM again after finish in DONE branch"
+    assert result == "end_turn react finish done"
+
+
 def test_finish_registry_checks_tool_name():
     """Verify that the finish check in execute_tools guards on tool name."""
     registry = _make_registry()

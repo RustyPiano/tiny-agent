@@ -8,10 +8,29 @@ from sessions.migrations import migrate
 SCHEMA_VERSION = 1
 
 
+def _sessions_root() -> pathlib.Path:
+    root = pathlib.Path(config.SESSIONS_DIR).resolve()
+    root.mkdir(exist_ok=True)
+    return root
+
+
+def _validate_session_id(session_id: str) -> str:
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise ValueError("session_id 必须是非空字符串")
+    if any(part in session_id for part in ("/", "\\", "..", "\x00")):
+        raise ValueError(f"非法 session_id: {session_id!r}")
+    return session_id
+
+
 def _path(session_id: str) -> pathlib.Path:
-    p = pathlib.Path(config.SESSIONS_DIR)
-    p.mkdir(exist_ok=True)
-    return p / f"{session_id}.json"
+    safe_id = _validate_session_id(session_id)
+    root = _sessions_root()
+    target = (root / f"{safe_id}.json").resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"session_id 路径越界: {session_id!r}") from exc
+    return target
 
 
 def save(session_id: str, messages: list[dict], provider_type: str = "unknown") -> None:

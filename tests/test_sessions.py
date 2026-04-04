@@ -81,3 +81,15 @@ class TestStore:
         names = list_sessions()
         assert "a" in names
         assert "b" in names
+
+    def test_save_rejects_path_traversal_session_id(self):
+        with pytest.raises(ValueError):
+            save("../../escape", [], "x")
+
+    def test_load_rejects_path_traversal_session_id(self):
+        with pytest.raises(ValueError):
+            load("../escape")
+
+    def test_delete_rejects_path_traversal_session_id(self):
+        with pytest.raises(ValueError):
+            delete("../escape")

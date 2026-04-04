@@ -814,6 +814,15 @@ class AgentRuntime:
                     )
                     if react_decision is not None and react_decision.action != "NONE":
                         results = self.execute_tools(current_response)
+                        if self._finish_requested:
+                            self.persist_session()
+                            log_event("run_end", self.run_ctx, stop_reason="finish")
+                            if self.ui_event_printer is not None:
+                                summary = self._build_execution_summary()
+                                if summary:
+                                    self.ui_event_printer(f"\n  📋 执行摘要\n{summary}")
+                                self.ui_event_printer(f"  ✓ 任务完成")
+                            return self._finish_response
                         packaged = self.provider.tool_results_as_message(results)
                         self.ctx.add_tool_results(packaged)
                         self._print_turn_summary(current_response)
