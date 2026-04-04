@@ -26,6 +26,7 @@ from agent_framework.tools.edit_file_tool import register_edit_file_tool
 from agent_framework.tools.file_tools import register_file_tools
 from agent_framework.tools.finish_tool import register_finish_tool
 from agent_framework.tools.grep_tool import register_grep_tool
+from agent_framework.tools.job_tool import register_job_tools
 from agent_framework.tools.list_dir_tool import register_list_dir_tool
 from agent_framework.tools.skill_tool import register_skill_tool
 from agent_framework.tools.summarize_tool import register_summarize_tool
@@ -107,6 +108,7 @@ def bootstrap(settings: AgentSettings) -> None:
     register_finish_tool()
     register_list_dir_tool()
     register_grep_tool()
+    register_job_tools()
     try:
         result = load_extensions()
         for ext in result["loaded"]:
