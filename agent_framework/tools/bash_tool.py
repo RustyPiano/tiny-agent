@@ -2,7 +2,10 @@
 import os
 import re
 import shlex
+import shutil
 import subprocess
+import sys
+import tempfile
 
 from agent_framework._config import OUTPUT_TRUNCATE
 from agent_framework.tools.registry import register
@@ -83,7 +86,73 @@ def _is_blocked(command: str) -> str | None:
     return None
 
 
-def run_bash(command: str, timeout: int = 30, workdir: str | None = None) -> str:
+def _is_detached_command(command: str) -> bool:
+    stripped = command.strip()
+    return bool(stripped) and stripped.endswith("&") and not stripped.endswith("&&")
+
+
+def _select_timeout(command: str, timeout: int | None) -> int:
+    if timeout is not None:
+        return timeout
+
+    cmd = command.strip().lower()
+
+    build_install_patterns = [
+        r"^cargo\s+(build|check|test)(\s|$)",
+        r"^(npm|pnpm|yarn)\s+install(\s|$)",
+        r"^pip\s+install(\s|$)",
+    ]
+    for pattern in build_install_patterns:
+        if re.search(pattern, cmd):
+            return 300
+
+    test_patterns = [
+        r"^pytest(\s|$)",
+        r"^(npm|pnpm|yarn)\s+test(\s|$)",
+        r"^go\s+test(\s|$)",
+        r"^mvn\s+test(\s|$)",
+        r"^gradle\s+test(\s|$)",
+    ]
+    for pattern in test_patterns:
+        if re.search(pattern, cmd):
+            return 180
+
+    return 30
+
+
+def _check_timeout_binary(command: str) -> str | None:
+    tokens = _tokenize_command(command)
+    if not tokens:
+        return None
+    if os.path.basename(tokens[0]).lower() != "timeout":
+        return None
+    if shutil.which("timeout"):
+        return None
+
+    if sys.platform == "darwin":
+        return "[error] 未找到 `timeout` 命令。macOS 可先执行 `brew install coreutils`，然后改用 `gtimeout`。"
+    return "[error] 未找到 `timeout` 命令。请先安装 coreutils 或使用系统可用的超时工具。"
+
+
+def _truncate_output(output: str) -> str:
+    if len(output) <= OUTPUT_TRUNCATE:
+        return output
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", suffix=".log", prefix="agent_framework_bash_", delete=False
+        ) as fp:
+            fp.write(output)
+            artifact_path = fp.name
+        return (
+            output[:OUTPUT_TRUNCATE]
+            + f"\n...[输出已截断，共 {len(output)} 字符]"
+            + f"\n完整输出已保存到: {artifact_path}"
+        )
+    except Exception:
+        return output[:OUTPUT_TRUNCATE] + f"\n...[输出已截断，共 {len(output)} 字符]"
+
+
+def run_bash(command: str, timeout: int | None = None, workdir: str | None = None) -> str:
     block_reason = _is_blocked(command)
     if block_reason:
         return f"[blocked] 命令被拒绝: {block_reason}\n原始命令: {command}"
@@ -91,13 +160,25 @@ def run_bash(command: str, timeout: int = 30, workdir: str | None = None) -> str
     if not command.strip():
         return "[error] 空命令，未执行"
 
+    if _is_detached_command(command):
+        return (
+            "[blocked] 不支持以 '&' 启动后台分离命令。"
+            "请使用任务工具管理长任务：`start_job`、`poll_job`、`read_job_log`、`cancel_job`（如当前环境已启用）。"
+        )
+
+    timeout_error = _check_timeout_binary(command)
+    if timeout_error:
+        return timeout_error
+
+    selected_timeout = _select_timeout(command, timeout)
+
     try:
         result = subprocess.run(
             command,
             shell=True,
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=selected_timeout,
             cwd=workdir,
         )
         output = result.stdout
@@ -105,11 +186,9 @@ def run_bash(command: str, timeout: int = 30, workdir: str | None = None) -> str
             output += f"\n[stderr]\n{result.stderr}"
         if not output.strip():
             output = f"[ok] 命令执行完毕，退出码 {result.returncode}，无输出"
-        if len(output) > OUTPUT_TRUNCATE:
-            output = output[:OUTPUT_TRUNCATE] + f"\n...[输出已截断，共 {len(output)} 字符]"
-        return output
+        return _truncate_output(output)
     except subprocess.TimeoutExpired:
-        return f"[timeout] 命令在 {timeout}s 内未完成: {command}"
+        return f"[timeout] 命令在 {selected_timeout}s 内未完成: {command}"
     except Exception as e:
         return f"[error] {e}"
 
@@ -124,7 +203,10 @@ def register_bash_tool() -> None:
         ),
         parameters={
             "command": {"type": "string", "description": "要执行的 shell 命令"},
-            "timeout": {"type": "integer", "description": "超时秒数，默认 30"},
+            "timeout": {
+                "type": ["integer", "null"],
+                "description": "可选超时秒数；不传时自动按命令类型选择",
+            },
             "workdir": {"type": "string", "description": "工作目录路径，默认当前目录"},
         },
         required=["command"],

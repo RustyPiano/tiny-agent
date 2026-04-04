@@ -1,8 +1,10 @@
 # tests/test_tools.py
+import re
 from pathlib import Path
 
 from agent_framework import _config as config
 from agent_framework.skills import discover_skills
+from agent_framework.tools import bash_tool
 from agent_framework.tools.bash_tool import run_bash
 from agent_framework.tools.file_tools import read_file, write_file
 from agent_framework.tools.skill_tool import use_skill
@@ -89,6 +91,82 @@ def test_bash_timeout():
 def test_bash_blocked():
     result = run_bash("rm -rf /")
     assert "[blocked]" in result
+
+
+def test_bash_rejects_detached_command_with_job_guidance():
+    result = run_bash("sleep 1 &")
+
+    assert "[blocked]" in result
+    assert "start_job" in result
+    assert "poll_job" in result
+    assert "read_job_log" in result
+    assert "cancel_job" in result
+
+
+def test_bash_missing_timeout_binary_returns_platform_hint(monkeypatch):
+    monkeypatch.setattr(bash_tool.shutil, "which", lambda _: None)
+
+    result = run_bash("timeout 3 sleep 1")
+
+    assert "[error]" in result
+    assert "timeout" in result
+    assert "brew install coreutils" in result
+
+
+def test_bash_adaptive_timeout_for_long_commands(monkeypatch):
+    observed_timeouts: list[int | None] = []
+
+    def fake_run(*args, **kwargs):
+        observed_timeouts.append(kwargs.get("timeout"))
+        return bash_tool.subprocess.CompletedProcess(
+            args=args[0], returncode=0, stdout="ok", stderr=""
+        )
+
+    monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
+
+    run_bash("npm install")
+    run_bash("pytest tests/test_tools.py")
+    run_bash("echo hello")
+
+    assert observed_timeouts[0] == 300
+    assert observed_timeouts[1] == 180
+    assert observed_timeouts[2] == 30
+
+
+def test_bash_truncation_includes_saved_full_output_path(monkeypatch):
+    monkeypatch.setattr(bash_tool, "OUTPUT_TRUNCATE", 10)
+
+    def fake_run(*args, **kwargs):
+        return bash_tool.subprocess.CompletedProcess(
+            args=args[0], returncode=0, stdout="x" * 50, stderr=""
+        )
+
+    monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
+
+    result = run_bash("echo oversize")
+
+    assert "[输出已截断" in result
+    assert "完整输出已保存到:" in result
+    match = re.search(r"完整输出已保存到:\s*(\S+)", result)
+    assert match is not None
+    assert Path(match.group(1)).exists()
+
+
+def test_bash_explicit_timeout_uses_legacy_behavior(monkeypatch):
+    observed_timeouts: list[int | None] = []
+
+    def fake_run(*args, **kwargs):
+        observed_timeouts.append(kwargs.get("timeout"))
+        return bash_tool.subprocess.CompletedProcess(
+            args=args[0], returncode=0, stdout="", stderr=""
+        )
+
+    monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
+
+    result = run_bash("true", timeout=30)
+
+    assert observed_timeouts == [30]
+    assert "[ok] 命令执行完毕，退出码 0，无输出" in result
 
 
 def test_use_skill_returns_prompt_text(tmp_path):
