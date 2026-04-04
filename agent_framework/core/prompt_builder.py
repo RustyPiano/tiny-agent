@@ -13,7 +13,8 @@ def build_system_prompt(
     if enable_subagent_flow:
         parts.append(
             "## Subagent Flow Discipline\n"
-            "- Follow deterministic phase progression: implement -> spec_review -> quality_review.\n"
+            "- Follow deterministic phase progression: "
+            "implement -> spec_review -> quality_review.\n"
             "- Report status using only DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, or BLOCKED.\n"
             "- Surface blockers/context needs immediately; do not skip phases."
         )

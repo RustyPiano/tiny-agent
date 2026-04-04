@@ -169,7 +169,10 @@ def _check_timeout_binary(command: str) -> str | None:
         return None
 
     if sys.platform == "darwin":
-        return "[error] 未找到 `timeout` 命令。macOS 可先执行 `brew install coreutils`，然后改用 `gtimeout`。"
+        return (
+            "[error] 未找到 `timeout` 命令。"
+            "macOS 可先执行 `brew install coreutils`，然后改用 `gtimeout`。"
+        )
     return "[error] 未找到 `timeout` 命令。请先安装 coreutils 或使用系统可用的超时工具。"
 
 

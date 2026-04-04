@@ -90,6 +90,20 @@ class SubagentFlowState:
                 "phase": self.phase,
                 "message": "task_id does not match active task",
             }
+        if not isinstance(phase, str) or not phase:
+            return {
+                "ok": False,
+                "next_action": "wait_for_context",
+                "phase": self.phase,
+                "message": "phase must be a non-empty string",
+            }
+        if not isinstance(status, str) or not status:
+            return {
+                "ok": False,
+                "next_action": "wait_for_context",
+                "phase": self.phase,
+                "message": "status must be a non-empty string",
+            }
         if phase != self.phase:
             return {
                 "ok": False,

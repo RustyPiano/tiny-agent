@@ -77,9 +77,7 @@ def _cleanup_jobs_locked() -> None:
             stale_ids.append(job_id)
 
     for job_id in stale_ids:
-        record = _JOBS.pop(job_id, None)
-        if record is None:
-            continue
+        record = _JOBS.pop(job_id)
         try:
             os.remove(record.log_path)
         except Exception:
