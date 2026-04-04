@@ -87,8 +87,37 @@ def _is_blocked(command: str) -> str | None:
 
 
 def _is_detached_command(command: str) -> bool:
-    stripped = command.strip()
-    return bool(stripped) and stripped.endswith("&") and not stripped.endswith("&&")
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+
+    for i, ch in enumerate(command):
+        if escaped:
+            escaped = False
+            continue
+
+        if ch == "\\":
+            escaped = True
+            continue
+
+        if ch == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            continue
+
+        if ch == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            continue
+
+        if in_single_quote or in_double_quote:
+            continue
+
+        if ch == "&":
+            prev_char = command[i - 1] if i > 0 else ""
+            next_char = command[i + 1] if i + 1 < len(command) else ""
+            if prev_char != "&" and next_char != "&":
+                return True
+
+    return False
 
 
 def _select_timeout(command: str, timeout: int | None) -> int:

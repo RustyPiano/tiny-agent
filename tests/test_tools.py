@@ -103,14 +103,33 @@ def test_bash_rejects_detached_command_with_job_guidance():
     assert "cancel_job" in result
 
 
+def test_bash_rejects_background_operator_not_only_at_end():
+    result = run_bash("sleep 30 & echo done")
+
+    assert "[blocked]" in result
+    assert "start_job" in result
+
+
 def test_bash_missing_timeout_binary_returns_platform_hint(monkeypatch):
     monkeypatch.setattr(bash_tool.shutil, "which", lambda _: None)
+    monkeypatch.setattr(bash_tool.sys, "platform", "darwin")
 
     result = run_bash("timeout 3 sleep 1")
 
     assert "[error]" in result
     assert "timeout" in result
     assert "brew install coreutils" in result
+
+
+def test_bash_missing_timeout_binary_returns_cross_platform_hint(monkeypatch):
+    monkeypatch.setattr(bash_tool.shutil, "which", lambda _: None)
+    monkeypatch.setattr(bash_tool.sys, "platform", "linux")
+
+    result = run_bash("timeout 3 sleep 1")
+
+    assert "[error]" in result
+    assert "timeout" in result
+    assert "coreutils" in result
 
 
 def test_bash_adaptive_timeout_for_long_commands(monkeypatch):
