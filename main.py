@@ -28,6 +28,29 @@ from tools.skill_tool import register_skill_tool
 from tools.summarize_tool import register_summarize_tool
 
 
+def _build_concise_event_printer():
+    tag_map = {
+        "▸": "THINK",
+        "•": "TOOL ",
+        "✓": "OK   ",
+        "✗": "FAIL ",
+        "⚠": "WARN ",
+        "↳": "INFO ",
+        "📋": "SUM  ",
+    }
+
+    def _printer(message: str) -> None:
+        text = str(message)
+        for raw_line in text.splitlines():
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            tag = tag_map.get(stripped[:1], "INFO ")
+            print(f"  [{tag}] {stripped}")
+
+    return _printer
+
+
 def bootstrap(settings: AgentSettings) -> None:
     try:
         summary = discover_skills(
@@ -136,7 +159,7 @@ def main() -> None:
 
     show_turns = ui_mode == "detailed"
     turn_printer = print if show_turns else lambda *a, **k: None
-    ui_event_printer = print if ui_mode == "concise" else None
+    ui_event_printer = _build_concise_event_printer() if ui_mode == "concise" else None
 
     # concise 模式默认 WARNING 级别，避免 INFO 日志淹没界面
     log_level = args.log_level if args.log_level is not None else ("INFO" if show_turns else "WARNING")
@@ -180,7 +203,8 @@ def main() -> None:
             if ui_mode == "detailed":
                 log_event("session_start", run_ctx, input=user_input[:100])
             if ui_mode == "concise":
-                print("\n  ▸ 开始处理")
+                print()
+                ui_event_printer("▸ 开始处理")
             result = run(
                 user_input,
                 settings=settings,

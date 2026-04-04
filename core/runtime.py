@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import difflib
 import threading
 import time
 from collections.abc import Callable
@@ -89,6 +90,7 @@ class AgentRuntime:
         self._finish_response: str = ""
         self._hb_stop: threading.Event | None = None
         self._hb_thread: threading.Thread | None = None
+        self._tool_call_log: list[dict] = []
         allowed_tools: set[str] = set()
         if tool_registry is not None:
             list_tools = getattr(tool_registry, "list_tools", None)
@@ -125,6 +127,144 @@ class AgentRuntime:
             self._hb_stop.set()
         if self._hb_thread is not None:
             self._hb_thread.join(timeout=1)
+
+    def _truncate(self, text: str, max_len: int) -> str:
+        if len(text) <= max_len:
+            return text
+        return text[:max_len] + "…"
+
+    def _line_count(self, text: str) -> int:
+        if not text:
+            return 0
+        return len(text.splitlines())
+
+    def _tool_status(self, output_text: str) -> str:
+        if output_text.startswith("[timeout]"):
+            return "timeout"
+        if output_text.startswith("[blocked]"):
+            return "blocked"
+        if output_text.startswith("[error]") or output_text.startswith("[tool_error]"):
+            return "error"
+        return "ok"
+
+    def _preview_first_line(self, output_text: str, max_len: int = 100) -> str:
+        lines = output_text.splitlines()
+        first = ""
+        for line in lines:
+            stripped = line.strip()
+            if stripped:
+                first = stripped
+                break
+        if not first:
+            first = output_text.strip()
+        return self._truncate(first, max_len)
+
+    def _safe_read_text(self, path_value) -> str | None:
+        if not isinstance(path_value, str) or not path_value:
+            return None
+        try:
+            p = Path(path_value).resolve()
+            if not p.exists() or not p.is_file():
+                return None
+            return p.read_text(encoding="utf-8")
+        except Exception:
+            return None
+
+    def _line_delta(self, before_text: str, after_text: str) -> tuple[int, int]:
+        before_lines = before_text.splitlines()
+        after_lines = after_text.splitlines()
+        diff = difflib.ndiff(before_lines, after_lines)
+        added = 0
+        removed = 0
+        for line in diff:
+            if line.startswith("+ "):
+                added += 1
+            elif line.startswith("- "):
+                removed += 1
+        return added, removed
+
+    def _emit_tool_detail(
+        self,
+        tool_name: str,
+        inputs: dict,
+        output_text: str,
+        edit_before_text: str | None = None,
+    ) -> None:
+        if self.ui_event_printer is None:
+            return
+
+        status = self._tool_status(output_text)
+
+        if tool_name == "use_skill":
+            skill_name = inputs.get("name", "")
+            detail = f"    ↳ skill={skill_name}" if skill_name else "    ↳ skill=<unknown>"
+            self.ui_event_printer(detail)
+            return
+
+        if tool_name == "list_dir":
+            path = inputs.get("path", "")
+            if status != "ok":
+                self.ui_event_printer(
+                    f"    ↳ path={path} 状态={status} 输出={self._preview_first_line(output_text)}"
+                )
+                return
+            entries = [line.strip() for line in output_text.splitlines() if line.strip()]
+            total = len(entries)
+            shown = entries[:8]
+            suffix = f", ... (+{total - len(shown)})" if total > len(shown) else ""
+            preview = ", ".join(shown)
+            self.ui_event_printer(f"    ↳ path={path} 结果({total}): {preview}{suffix}")
+            return
+
+        if tool_name == "write_file":
+            path = inputs.get("path", "")
+            mode = inputs.get("mode", "overwrite")
+            content = inputs.get("content", "")
+            lines = self._line_count(content) if isinstance(content, str) else 0
+            self.ui_event_printer(f"    ↳ path={path} 写入 {lines} 行 ({mode})")
+            return
+
+        if tool_name == "read_file":
+            path = inputs.get("path", "")
+            if status != "ok":
+                self.ui_event_printer(
+                    f"    ↳ path={path} 状态={status} 输出={self._preview_first_line(output_text)}"
+                )
+                return
+            lines = self._line_count(output_text)
+            self.ui_event_printer(f"    ↳ path={path} 读取 {lines} 行")
+            return
+
+        if tool_name == "edit_file":
+            path = inputs.get("path", "")
+            if status != "ok":
+                self.ui_event_printer(
+                    f"    ↳ path={path} 状态={status} 输出={self._preview_first_line(output_text)}"
+                )
+                return
+            after_text = self._safe_read_text(path)
+            if edit_before_text is None or after_text is None:
+                self.ui_event_printer(f"    ↳ path={path} +? / -?")
+                return
+            added, removed = self._line_delta(edit_before_text, after_text)
+            self.ui_event_printer(f"    ↳ path={path} +{added} / -{removed}")
+            return
+
+        if tool_name == "run_bash":
+            command = inputs.get("command", "")
+            cmd_preview = self._truncate(command, 80) if isinstance(command, str) else ""
+            self.ui_event_printer(f"    ↳ cmd={cmd_preview}")
+            self.ui_event_printer(
+                f"    ↳ 状态={status} 输出={self._preview_first_line(output_text)}"
+            )
+            return
+
+        if tool_name == "finish":
+            lines = self._line_count(output_text)
+            self.ui_event_printer(f"    ↳ 最终回复 {lines} 行")
+            return
+
+        self.ui_event_printer(f"    ↳ 状态={status} 输出={self._preview_first_line(output_text)}")
 
     def next_step(self, response: LLMResponse | None) -> Step:
         return self.policy.next_step(self.state.turn, self.settings.max_turns, response)
@@ -425,12 +565,14 @@ class AgentRuntime:
             inputs_obj = tc.inputs if isinstance(tc.inputs, dict) else {}
             execute_inputs = dict(inputs_obj)
             log_inputs = dict(inputs_obj)
+            detail_inputs = dict(inputs_obj)
 
             allowed, reason = self.security_guard.validate_tool_call(tc.name, execute_inputs)
             if not allowed:
                 blocked_output = f"[blocked] {reason}"
                 results.append(self.provider.format_tool_result(tc.id, blocked_output))
                 tool_statuses.append(f"{tc.name}:blocked")
+                self._emit_tool_detail(tc.name, detail_inputs, blocked_output)
                 log_event(
                     "tool_result",
                     self.run_ctx,
@@ -459,9 +601,11 @@ class AgentRuntime:
                 }
 
             log_event("tool_call", self.run_ctx, tool=tc.name, inputs=log_inputs)
+            self._tool_call_log.append({"tool": tc.name, "inputs": dict(log_inputs)})
             if self.ui_event_printer is not None:
                 self.ui_event_printer(f"  • 工具 {tc.name} 开始")
             tool_start = time.time()
+            edit_before_text = self._safe_read_text(execute_inputs.get("path")) if tc.name == "edit_file" else None
             self._start_heartbeat(tc.name, tool_start)
             try:
                 if tc.name == "run_bash":
@@ -484,6 +628,7 @@ class AgentRuntime:
                     self.ui_event_printer(f"  ✓ {tc.name} 完成（{elapsed:.1f}s）")
             results.append(self.provider.format_tool_result(tc.id, output))
             output_text = str(output)
+            self._emit_tool_detail(tc.name, detail_inputs, output_text, edit_before_text)
             if (
                 tc.name == "finish"
                 and not output_text.startswith("[error]")
@@ -535,6 +680,59 @@ class AgentRuntime:
     def final_response_text(self) -> str:
         text = self.state.response.text if self.state.response else ""
         return text or "[无文本输出]"
+
+    def _build_execution_summary(self) -> str:
+        if not self._tool_call_log:
+            return ""
+        lines = []
+        tools_used: dict[str, int] = {}
+        files_written: list[str] = []
+        files_read: list[str] = []
+        files_edited: list[str] = []
+        commands: list[str] = []
+        skills_used: list[str] = []
+
+        for entry in self._tool_call_log:
+            tool = entry["tool"]
+            inputs = entry.get("inputs", {})
+            tools_used[tool] = tools_used.get(tool, 0) + 1
+
+            if tool == "write_file":
+                path = inputs.get("path", "")
+                if path and path not in files_written:
+                    files_written.append(path)
+            elif tool == "read_file":
+                path = inputs.get("path", "")
+                if path and path not in files_read:
+                    files_read.append(path)
+            elif tool == "edit_file":
+                path = inputs.get("path", "")
+                if path and path not in files_edited:
+                    files_edited.append(path)
+            elif tool == "run_bash":
+                cmd = inputs.get("command", "")
+                if cmd and cmd not in commands:
+                    commands.append(cmd)
+            elif tool == "use_skill":
+                skill = inputs.get("name", "")
+                if skill and skill not in skills_used:
+                    skills_used.append(skill)
+
+        if skills_used:
+            lines.append(f"Skills: {', '.join(skills_used)}")
+        if files_written:
+            lines.append(f"写入文件: {', '.join(files_written)}")
+        if files_edited:
+            lines.append(f"编辑文件: {', '.join(files_edited)}")
+        if files_read:
+            lines.append(f"读取文件: {', '.join(files_read)}")
+        if commands:
+            cmd_preview = [c[:60] + ("…" if len(c) > 60 else "") for c in commands[:5]]
+            lines.append(f"执行命令: {', '.join(cmd_preview)}")
+
+        tool_summary = ", ".join(f"{t}×{c}" for t, c in tools_used.items())
+        lines.append(f"工具调用: {tool_summary}")
+        return "\n".join(lines)
 
     def run(self) -> str:
         self._finish_requested = False
@@ -591,6 +789,9 @@ class AgentRuntime:
                     self.persist_session()
                     log_event("run_end", self.run_ctx, stop_reason="finish")
                     if self.ui_event_printer is not None:
+                        summary = self._build_execution_summary()
+                        if summary:
+                            self.ui_event_printer(f"\n  📋 执行摘要\n{summary}")
                         self.ui_event_printer(f"  ✓ 任务完成")
                     return self._finish_response
                 self.state.react_format_retries = 0
@@ -628,6 +829,9 @@ class AgentRuntime:
                         self.persist_session()
                         log_event("run_end", self.run_ctx, stop_reason="end_turn")
                         if self.ui_event_printer is not None:
+                            summary = self._build_execution_summary()
+                            if summary:
+                                self.ui_event_printer(f"\n  📋 执行摘要\n{summary}")
                             self.ui_event_printer(f"  ✓ 任务完成")
                         return react_decision.thought
                     if (
@@ -655,6 +859,9 @@ class AgentRuntime:
                 self.persist_session()
                 log_event("run_end", self.run_ctx, stop_reason="end_turn")
                 if self.ui_event_printer is not None:
+                    summary = self._build_execution_summary()
+                    if summary:
+                        self.ui_event_printer(f"\n  📋 执行摘要\n{summary}")
                     self.ui_event_printer(f"  ✓ 任务完成")
                 return self.final_response_text()
             raise RuntimeError(f"Unhandled runtime step: {step!r}")

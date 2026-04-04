@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import threading
+from pathlib import Path
 
 from config import AgentSettings
 from core.context import Context
@@ -206,3 +207,131 @@ def test_no_ui_events_when_printer_is_none():
     result = runtime.run()
 
     assert result == "done"
+
+
+def test_ui_event_printer_emits_per_tool_details(tmp_path: Path):
+    events: list[str] = []
+    edit_target = tmp_path / "edit_target.txt"
+    edit_target.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
+
+    class _DetailRegistry:
+        def execute(self, name: str, inputs: dict) -> str:
+            if name == "use_skill":
+                return "# Find Skills"
+            if name == "list_dir":
+                return "\n".join(f"item{i}" for i in range(10))
+            if name == "write_file":
+                Path(inputs["path"]).write_text(inputs["content"], encoding="utf-8")
+                return f"[ok] 已写入 {len(inputs['content'])} 字符到 {inputs['path']}"
+            if name == "read_file":
+                return "1\tline1\n2\tline2\n3\tline3"
+            if name == "edit_file":
+                p = Path(inputs["path"])
+                text = p.read_text(encoding="utf-8")
+                p.write_text(text.replace(inputs["old_str"], inputs["new_str"], 1), encoding="utf-8")
+                return f"[ok] 已更新文件: {inputs['path']}"
+            if name == "run_bash":
+                return "ok output line one\nok output line two"
+            if name == "finish":
+                return '{"response":"done"}'
+            return "[error] unknown tool"
+
+        def get_schemas(self) -> list[dict]:
+            return [
+                {"name": "use_skill"},
+                {"name": "list_dir"},
+                {"name": "write_file"},
+                {"name": "read_file"},
+                {"name": "edit_file"},
+                {"name": "run_bash"},
+                {"name": "finish"},
+            ]
+
+        def list_tools(self) -> list[str]:
+            return [
+                "use_skill",
+                "list_dir",
+                "write_file",
+                "read_file",
+                "edit_file",
+                "run_bash",
+                "finish",
+            ]
+
+    runtime = _make_runtime(_NoopProvider(), _DetailRegistry(), ui_event_printer=events.append)
+
+    response = LLMResponse(
+        text="",
+        tool_calls=[
+            ToolCall(id="c1", name="use_skill", inputs={"name": "find-skills"}),
+            ToolCall(id="c2", name="list_dir", inputs={"path": str(tmp_path)}),
+            ToolCall(
+                id="c3",
+                name="write_file",
+                inputs={
+                    "path": str(tmp_path / "new.txt"),
+                    "content": "a\nb\nc\n",
+                    "mode": "overwrite",
+                },
+            ),
+            ToolCall(id="c4", name="read_file", inputs={"path": str(tmp_path / "new.txt")}),
+            ToolCall(
+                id="c5",
+                name="edit_file",
+                inputs={
+                    "path": str(edit_target),
+                    "old_str": "beta",
+                    "new_str": "BETA",
+                },
+            ),
+            ToolCall(
+                id="c6",
+                name="run_bash",
+                inputs={
+                    "command": "python run_script.py " + "x" * 120,
+                },
+            ),
+            ToolCall(id="c7", name="finish", inputs={"response": "done"}),
+        ],
+        stop_reason="tool_use",
+        assistant_message={"role": "assistant", "content": []},
+    )
+
+    runtime.execute_tools(response)
+
+    assert any("skill=find-skills" in e for e in events)
+    assert any("结果(10)" in e and "+2" in e for e in events)
+    assert any("写入 3 行" in e and "new.txt" in e for e in events)
+    assert any("读取 3 行" in e and "new.txt" in e for e in events)
+    assert any("+1 / -1" in e and "edit_target.txt" in e for e in events)
+    assert any("cmd=python run_script.py" in e and "…" in e for e in events)
+
+
+def test_ui_event_printer_shows_bash_status_and_preview():
+    events: list[str] = []
+
+    class _BashRegistry:
+        def execute(self, name: str, inputs: dict) -> str:
+            _ = inputs
+            if name == "run_bash":
+                return "[timeout] 命令在 30s 内未完成: long command"
+            return "ok"
+
+        def get_schemas(self) -> list[dict]:
+            return [{"name": "run_bash"}]
+
+        def list_tools(self) -> list[str]:
+            return ["run_bash"]
+
+    runtime = _make_runtime(_NoopProvider(), _BashRegistry(), ui_event_printer=events.append)
+    response = LLMResponse(
+        text="",
+        tool_calls=[ToolCall(id="c1", name="run_bash", inputs={"command": "echo hello"})],
+        stop_reason="tool_use",
+        assistant_message={"role": "assistant", "content": []},
+    )
+
+    runtime.execute_tools(response)
+
+    assert any("状态=timeout" in e for e in events)
+    assert any("输出=" in e for e in events)
