@@ -9,6 +9,7 @@ class DummySettings:
     provider_type = "openai"
     model = "dummy-model"
     base_url = None
+    enable_subagent_flow = False
 
     def validate(self):
         return []
@@ -95,3 +96,23 @@ def test_ui_concise_takes_priority_over_show_turns(monkeypatch, capsys):
     assert callable(captured_kwargs["turn_printer"])
     assert "[t1] stop=end_turn tools=0" not in out
     assert "开始处理" in out
+
+
+def test_enable_subagent_flow_cli_sets_feature_flag(monkeypatch, capsys):
+    captured_kwargs, _ = _run_main_with_args(
+        monkeypatch,
+        capsys,
+        ["--enable-subagent-flow"],
+    )
+
+    assert captured_kwargs["settings"].enable_subagent_flow is True
+
+
+def test_disable_subagent_flow_cli_sets_feature_flag(monkeypatch, capsys):
+    captured_kwargs, _ = _run_main_with_args(
+        monkeypatch,
+        capsys,
+        ["--disable-subagent-flow"],
+    )
+
+    assert captured_kwargs["settings"].enable_subagent_flow is False

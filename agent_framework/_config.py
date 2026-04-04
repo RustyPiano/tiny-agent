@@ -16,6 +16,21 @@ MAX_MEMORY_LINES = 200
 CONTEXT_SOFT_LIMIT_TOKENS = 160000
 MAX_COMPACT_HISTORY_MESSAGES = 8
 
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+_FALSE_VALUES = {"0", "false", "no", "off"}
+
+
+def _parse_bool_env(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in _TRUE_VALUES:
+        return True
+    if normalized in _FALSE_VALUES:
+        return False
+    return default
+
+
 # 工作空间根目录（向后兼容，测试和 tools 仍在引用）
 WORKSPACE_ROOT = pathlib.Path(os.getenv("AGENT_WORKSPACE", os.getcwd())).resolve()
 PROJECT_SKILLS_DIR = WORKSPACE_ROOT / ".agents" / "skills"
@@ -99,6 +114,7 @@ class AgentSettings:
     max_turns: int = MAX_TURNS
     output_truncate: int = OUTPUT_TRUNCATE
     context_soft_limit_tokens: int = CONTEXT_SOFT_LIMIT_TOKENS
+    enable_subagent_flow: bool = False
 
     def validate(self) -> list[str]:
         """校验配置，返回错误列表"""
@@ -141,6 +157,10 @@ class AgentSettings:
             )
             .expanduser()
             .resolve(),
+            enable_subagent_flow=_parse_bool_env(
+                os.getenv("AGENT_ENABLE_SUBAGENT_FLOW"),
+                default=False,
+            ),
         )
 
     def to_provider_config(self) -> dict:

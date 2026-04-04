@@ -24,6 +24,7 @@ from agent_framework.core.policies import DefaultRuntimePolicy, RuntimePolicy, S
 from agent_framework.core.react_protocol import ReactDecision, parse_react_json_with_error
 from agent_framework.core.sandbox import sandbox_cwd
 from agent_framework.core.security import SecurityGuard
+from agent_framework.core.subagent_flow import SubagentFlowState
 from agent_framework.llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
 if TYPE_CHECKING:
@@ -91,6 +92,7 @@ class AgentRuntime:
         self._hb_stop: threading.Event | None = None
         self._hb_thread: threading.Thread | None = None
         self._tool_call_log: list[dict] = []
+        self._subagent_flow_state: SubagentFlowState | None = None
         allowed_tools: set[str] = set()
         if tool_registry is not None:
             list_tools = getattr(tool_registry, "list_tools", None)
@@ -107,6 +109,28 @@ class AgentRuntime:
                         if isinstance(schema_name, str) and schema_name:
                             allowed_tools.add(schema_name)
         self.security_guard = SecurityGuard(allowed_tools=allowed_tools)
+
+    def enable_subagent_flow(self, tasks: list[str]) -> None:
+        self._subagent_flow_state = SubagentFlowState(tasks=list(tasks))
+
+    def handle_flow_result(self, payload: dict) -> dict:
+        if not isinstance(payload, dict):
+            return {
+                "ok": False,
+                "next_action": "wait_for_context",
+                "phase": "implement",
+                "message": "payload must be a dict",
+            }
+
+        if self._subagent_flow_state is None:
+            return {
+                "ok": False,
+                "next_action": "wait_for_context",
+                "phase": "implement",
+                "message": "subagent flow not enabled",
+            }
+
+        return self._subagent_flow_state.handle_payload(payload)
 
     def _start_heartbeat(self, tool_name: str, start_time: float) -> None:
         if self.ui_event_printer is None:

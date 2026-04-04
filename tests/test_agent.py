@@ -533,3 +533,30 @@ def test_load_history_treats_missing_stored_provider_as_unknown(monkeypatch):
     )
 
     assert history == [{"role": "user", "content": "legacy"}]
+
+
+def test_run_passes_subagent_flow_flag_to_prompt_builder(monkeypatch):
+    provider = MockProvider(
+        [
+            LLMResponse(
+                text="ok",
+                tool_calls=[],
+                stop_reason="end_turn",
+                assistant_message={"role": "assistant", "content": "ok"},
+            )
+        ]
+    )
+    captured: dict = {}
+
+    def fake_build_system_prompt(skill_names=None, enable_subagent_flow=False):
+        captured["skill_names"] = skill_names
+        captured["enable_subagent_flow"] = enable_subagent_flow
+        return "test-system"
+
+    monkeypatch.setattr("agent_framework.core.agent.build_system_prompt", fake_build_system_prompt)
+
+    settings = AgentSettings(enable_subagent_flow=True)
+    result = run("hello", provider=provider, settings=settings)
+
+    assert result == "ok"
+    assert captured["enable_subagent_flow"] is True

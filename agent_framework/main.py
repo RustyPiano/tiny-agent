@@ -152,6 +152,17 @@ def main() -> None:
         default=None,
         help="日志级别: DEBUG | INFO | WARNING | ERROR（concise 模式默认 WARNING）",
     )
+    subagent_flow_group = parser.add_mutually_exclusive_group()
+    subagent_flow_group.add_argument(
+        "--enable-subagent-flow",
+        action="store_true",
+        help="启用 subagent flow 编排路径",
+    )
+    subagent_flow_group.add_argument(
+        "--disable-subagent-flow",
+        action="store_true",
+        help="禁用 subagent flow 编排路径",
+    )
     args = parser.parse_args()
 
     # Resolve UI mode: --ui takes priority, then --show-turns fallback, then default concise
@@ -182,6 +193,10 @@ def main() -> None:
         settings.model = args.model
     if args.base_url:
         settings.base_url = args.base_url
+    if args.enable_subagent_flow:
+        settings.enable_subagent_flow = True
+    elif args.disable_subagent_flow:
+        settings.enable_subagent_flow = False
 
     # 校验配置
     errors = settings.validate()
