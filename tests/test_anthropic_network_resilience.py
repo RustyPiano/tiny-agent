@@ -5,11 +5,11 @@ import time
 
 import httpx
 
-from config import AgentSettings
-from core.context import Context
-from core.logging import RunContext
-from core.runtime import AgentRuntime
-from llm.base import BaseLLMProvider, LLMResponse
+from agent_framework._config import AgentSettings
+from agent_framework.core.context import Context
+from agent_framework.core.logging import RunContext
+from agent_framework.core.runtime import AgentRuntime
+from agent_framework.llm.base import BaseLLMProvider, LLMResponse
 
 
 def _make_api_connection_error(msg: str = "Connection error.") -> Exception:

@@ -4,7 +4,7 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 
-import config
+from agent_framework import _config as config
 
 
 @contextmanager

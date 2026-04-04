@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import builtins
 
-import main
+import agent_framework.main as main
 
 
 class DummySettings:

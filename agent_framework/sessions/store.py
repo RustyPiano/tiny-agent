@@ -2,8 +2,8 @@
 import json
 import pathlib
 
-import config
-from sessions.migrations import migrate
+from agent_framework import _config as config
+from agent_framework.sessions.migrations import migrate
 
 SCHEMA_VERSION = 1
 

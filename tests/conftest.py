@@ -3,7 +3,7 @@
 
 import pytest
 
-import config
+from agent_framework import _config as config
 
 
 @pytest.fixture(autouse=True)

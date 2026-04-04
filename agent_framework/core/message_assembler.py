@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from config import SYSTEM_PROMPT_DYNAMIC_BOUNDARY
+from agent_framework._config import SYSTEM_PROMPT_DYNAMIC_BOUNDARY
 
 
 def assemble_messages(

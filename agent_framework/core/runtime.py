@@ -13,21 +13,21 @@ from uuid import uuid4
 import anthropic
 import openai
 
-import config
-from core.context import Context
-from core.context_budget import estimate_tokens, should_compact
-from core.history_compactor import compact_history
-from core.logging import RunContext, log_event
-from core.memory_store import MemoryStore
-from core.message_assembler import assemble_messages
-from core.policies import DefaultRuntimePolicy, RuntimePolicy, Step
-from core.react_protocol import ReactDecision, parse_react_json_with_error
-from core.sandbox import sandbox_cwd
-from core.security import SecurityGuard
-from llm.base import BaseLLMProvider, LLMResponse, ToolCall
+from agent_framework import _config as config
+from agent_framework.core.context import Context
+from agent_framework.core.context_budget import estimate_tokens, should_compact
+from agent_framework.core.history_compactor import compact_history
+from agent_framework.core.logging import RunContext, log_event
+from agent_framework.core.memory_store import MemoryStore
+from agent_framework.core.message_assembler import assemble_messages
+from agent_framework.core.policies import DefaultRuntimePolicy, RuntimePolicy, Step
+from agent_framework.core.react_protocol import ReactDecision, parse_react_json_with_error
+from agent_framework.core.sandbox import sandbox_cwd
+from agent_framework.core.security import SecurityGuard
+from agent_framework.llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
 if TYPE_CHECKING:
-    from config import AgentSettings
+    from agent_framework._config import AgentSettings
 
 
 @dataclass

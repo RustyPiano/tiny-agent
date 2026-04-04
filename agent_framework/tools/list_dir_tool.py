@@ -1,7 +1,7 @@
 import pathlib
 
-import config
-from tools.registry import register
+from agent_framework import _config as config
+from agent_framework.tools.registry import register
 
 
 def list_dir(path: str) -> str:

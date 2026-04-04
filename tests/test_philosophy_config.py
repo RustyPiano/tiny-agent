@@ -1,4 +1,4 @@
-from config import (
+from agent_framework._config import (
     CONTEXT_SOFT_LIMIT_TOKENS,
     MAX_FILE_READ_LINES,
     MAX_HISTORY_RECORDS,

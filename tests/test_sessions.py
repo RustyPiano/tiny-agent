@@ -4,9 +4,9 @@ import pathlib
 
 import pytest
 
-import config
-from sessions.migrations import migrate
-from sessions.store import SCHEMA_VERSION, delete, list_sessions, load, save
+from agent_framework import _config as config
+from agent_framework.sessions.migrations import migrate
+from agent_framework.sessions.store import SCHEMA_VERSION, delete, list_sessions, load, save
 
 
 @pytest.fixture(autouse=True)

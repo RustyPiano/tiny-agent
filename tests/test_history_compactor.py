@@ -1,6 +1,6 @@
 import pytest
 
-from core.history_compactor import compact_history
+from agent_framework.core.history_compactor import compact_history
 
 
 def test_returns_original_history_when_within_limit():

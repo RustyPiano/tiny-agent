@@ -1,4 +1,4 @@
-from llm.anthropic_provider import AnthropicProvider
+from agent_framework.llm.anthropic_provider import AnthropicProvider
 
 
 class _DummyMessages:

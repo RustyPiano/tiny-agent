@@ -12,7 +12,7 @@ lint-fix:
 	ruff format .
 
 type:
-	mypy core/ llm/ tools/ skills/ sessions/
+	mypy agent_framework/
 
 check: lint type test
 

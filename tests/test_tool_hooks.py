@@ -1,4 +1,4 @@
-from tools import registry
+from agent_framework.tools import registry
 
 
 def setup_function():

@@ -1,6 +1,6 @@
 import textwrap
 
-from tools.registry import register
+from agent_framework.tools.registry import register
 
 
 def summarize(text: str, max_chars: int = 300) -> str:

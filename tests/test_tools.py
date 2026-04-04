@@ -1,11 +1,11 @@
 # tests/test_tools.py
 from pathlib import Path
 
-import config
-from skills import discover_skills
-from tools.bash_tool import run_bash
-from tools.file_tools import read_file, write_file
-from tools.skill_tool import use_skill
+from agent_framework import _config as config
+from agent_framework.skills import discover_skills
+from agent_framework.tools.bash_tool import run_bash
+from agent_framework.tools.file_tools import read_file, write_file
+from agent_framework.tools.skill_tool import use_skill
 
 
 def test_write_and_read(tmp_path):

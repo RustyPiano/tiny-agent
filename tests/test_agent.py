@@ -5,14 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from config import AgentSettings
-from core.agent import _load_history_with_provider_check, run
-from core.context import Context
-from core.logging import RunContext
-from core.policies import RuntimePolicy, Step
-from core.prompt_builder import build_system_prompt
-from core.runtime import AgentRuntime
-from llm.base import BaseLLMProvider, LLMResponse, ToolCall
+from agent_framework._config import AgentSettings
+from agent_framework.core.agent import _load_history_with_provider_check, run
+from agent_framework.core.context import Context
+from agent_framework.core.logging import RunContext
+from agent_framework.core.policies import RuntimePolicy, Step
+from agent_framework.core.prompt_builder import build_system_prompt
+from agent_framework.core.runtime import AgentRuntime
+from agent_framework.llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
 
 class MockProvider(BaseLLMProvider):
@@ -493,7 +493,7 @@ def test_runtime_handles_non_dict_tool_inputs():
 
 
 def test_system_prompt_contains_available_skills():
-    from skills import discover_skills
+    from agent_framework.skills import discover_skills
 
     discover_skills(
         project_dir=Path("/nonexistent/project"),
@@ -508,7 +508,7 @@ def test_load_history_treats_empty_stored_provider_as_unknown(monkeypatch):
         _ = session_id
         return [{"role": "user", "content": "legacy"}], ""
 
-    monkeypatch.setattr("core.agent.session_store.load", fake_load)
+    monkeypatch.setattr("agent_framework.core.agent.session_store.load", fake_load)
 
     history = _load_history_with_provider_check(
         session_id="legacy-session",
@@ -524,7 +524,7 @@ def test_load_history_treats_missing_stored_provider_as_unknown(monkeypatch):
         _ = session_id
         return [{"role": "user", "content": "legacy"}], None
 
-    monkeypatch.setattr("core.agent.session_store.load", fake_load)
+    monkeypatch.setattr("agent_framework.core.agent.session_store.load", fake_load)
 
     history = _load_history_with_provider_check(
         session_id="legacy-session",

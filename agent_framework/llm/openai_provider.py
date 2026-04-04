@@ -3,7 +3,7 @@ import json
 
 from openai import OpenAI
 
-from llm.base import BaseLLMProvider, LLMResponse, ToolCall
+from agent_framework.llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
 
 class OpenAIProvider(BaseLLMProvider):

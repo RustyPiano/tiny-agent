@@ -7,11 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
-from config import AgentSettings
-from core.context import Context
-from core.logging import RunContext
-from core.runtime import AgentRuntime
-from llm.base import BaseLLMProvider, LLMResponse
+from agent_framework._config import AgentSettings
+from agent_framework.core.context import Context
+from agent_framework.core.logging import RunContext
+from agent_framework.core.runtime import AgentRuntime
+from agent_framework.llm.base import BaseLLMProvider, LLMResponse
 
 
 def _make_api_connection_error(msg: str = "Connection error.") -> Exception:
@@ -170,11 +170,11 @@ def test_main_repl_continues_after_run_exception(monkeypatch):
     monkeypatch.setattr("sys.stdout", captured)
     monkeypatch.setattr("sys.argv", ["main.py"])
 
-    with patch("main.run", side_effect=fake_run):
-        with patch("main.create_provider"):
-            with patch("main.bootstrap"):
-                with patch("main.setup_logging"):
-                    with patch("main.AgentSettings") as mock_settings:
+    with patch("agent_framework.main.run", side_effect=fake_run):
+        with patch("agent_framework.main.create_provider"):
+            with patch("agent_framework.main.bootstrap"):
+                with patch("agent_framework.main.setup_logging"):
+                    with patch("agent_framework.main.AgentSettings") as mock_settings:
                         mock_instance = MagicMock()
                         mock_instance.validate.return_value = []
                         mock_instance.provider_type = "openai"
@@ -183,7 +183,7 @@ def test_main_repl_continues_after_run_exception(monkeypatch):
                         mock_settings.from_env.return_value = mock_instance
                         mock_settings.return_value = mock_instance
 
-                        from main import main
+                        from agent_framework.main import main as main
 
                         try:
                             main()

@@ -1,4 +1,4 @@
-from tools.edit_file_tool import edit_file
+from agent_framework.tools.edit_file_tool import edit_file
 
 
 def test_edit_file_successful_single_replacement(tmp_path):

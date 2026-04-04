@@ -3,7 +3,7 @@
 
 import pytest
 
-from tools import registry
+from agent_framework.tools import registry
 
 
 class ToolContractTests:
@@ -47,7 +47,7 @@ class TestBashToolContract(ToolContractTests):
         return "run_bash"
 
     def get_tool_schema(self):
-        from tools.bash_tool import register_bash_tool
+        from agent_framework.tools.bash_tool import register_bash_tool
 
         # 确保工具已注册
         if "run_bash" not in registry.list_tools():
@@ -59,7 +59,7 @@ class TestBashToolContract(ToolContractTests):
         pytest.fail("run_bash tool not found in registry")
 
     def get_tool_handler(self):
-        from tools.bash_tool import run_bash
+        from agent_framework.tools.bash_tool import run_bash
 
         return lambda: run_bash("echo test")
 
@@ -75,7 +75,7 @@ class TestReadFileToolContract(ToolContractTests):
         return "read_file"
 
     def get_tool_schema(self):
-        from tools.file_tools import register_file_tools
+        from agent_framework.tools.file_tools import register_file_tools
 
         if "read_file" not in registry.list_tools():
             register_file_tools()
@@ -86,7 +86,7 @@ class TestReadFileToolContract(ToolContractTests):
         pytest.fail("read_file tool not found in registry")
 
     def get_tool_handler(self):
-        from tools.file_tools import read_file
+        from agent_framework.tools.file_tools import read_file
 
         return lambda: read_file("/tmp/nonexistent_test_file.txt")
 
@@ -101,7 +101,7 @@ class TestWriteFileToolContract(ToolContractTests):
         return "write_file"
 
     def get_tool_schema(self):
-        from tools.file_tools import register_file_tools
+        from agent_framework.tools.file_tools import register_file_tools
 
         if "write_file" not in registry.list_tools():
             register_file_tools()
@@ -112,7 +112,7 @@ class TestWriteFileToolContract(ToolContractTests):
         pytest.fail("write_file tool not found in registry")
 
     def get_tool_handler(self):
-        from tools.file_tools import write_file
+        from agent_framework.tools.file_tools import write_file
 
         return lambda: write_file("/tmp/test_contract.txt", "test content")
 

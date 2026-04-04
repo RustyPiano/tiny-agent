@@ -1,6 +1,6 @@
 # tools/skill_tool.py
-from skills.registry import get_skill_prompt
-from tools.registry import register
+from agent_framework.skills.registry import get_skill_prompt
+from agent_framework.tools.registry import register
 
 
 def use_skill(name: str) -> str:

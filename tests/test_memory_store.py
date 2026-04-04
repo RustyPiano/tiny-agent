@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from core.memory_store import MemoryStore
+from agent_framework.core.memory_store import MemoryStore
 
 
 def test_append_writes_expected_line_format_and_truncates_summary(tmp_path: Path):

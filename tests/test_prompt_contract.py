@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from config import (
+from agent_framework._config import (
     BASE_SYSTEM_PROMPT,
     MAX_FILE_READ_LINES,
     MAX_HISTORY_RECORDS,

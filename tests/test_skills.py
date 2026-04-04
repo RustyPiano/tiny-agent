@@ -1,8 +1,8 @@
 # tests/test_skills.py
 from pathlib import Path
 
-from core.prompt_builder import build_system_prompt
-from skills.registry import (
+from agent_framework.core.prompt_builder import build_system_prompt
+from agent_framework.skills.registry import (
     clear_skills,
     discover_skills,
     get_skill_metadata,
@@ -10,7 +10,7 @@ from skills.registry import (
     load,
     render_available_skills,
 )
-from tools.skill_tool import use_skill
+from agent_framework.tools.skill_tool import use_skill
 
 
 def _write_skill(root: Path, folder_name: str, *, name: str, description: str, body: str) -> None:

@@ -1,5 +1,5 @@
 # llm/factory.py
-from llm.base import BaseLLMProvider
+from agent_framework.llm.base import BaseLLMProvider
 
 
 def create_provider(cfg: dict) -> BaseLLMProvider:
@@ -13,12 +13,12 @@ def create_provider(cfg: dict) -> BaseLLMProvider:
     t = cfg.get("type", "anthropic")
 
     if t == "anthropic":
-        from llm.anthropic_provider import AnthropicProvider
+        from agent_framework.llm.anthropic_provider import AnthropicProvider
 
         return AnthropicProvider(model=cfg["model"], api_key=cfg.get("api_key"))
 
     if t == "openai":
-        from llm.openai_provider import OpenAIProvider
+        from agent_framework.llm.openai_provider import OpenAIProvider
 
         return OpenAIProvider(
             model=cfg["model"],

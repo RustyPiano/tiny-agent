@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import config
-from config import MAX_FILE_READ_LINES
-from core.context import Context
-from core.context_budget import estimate_tokens, should_compact
-from core.runtime import AgentRuntime
-from llm.base import BaseLLMProvider, LLMResponse
-from tools.file_tools import read_file, write_file
+from agent_framework import _config as config
+from agent_framework._config import MAX_FILE_READ_LINES
+from agent_framework.core.context import Context
+from agent_framework.core.context_budget import estimate_tokens, should_compact
+from agent_framework.core.runtime import AgentRuntime
+from agent_framework.llm.base import BaseLLMProvider, LLMResponse
+from agent_framework.tools.file_tools import read_file, write_file
 
 
 def test_read_file_default_caps_to_max_lines(tmp_path):

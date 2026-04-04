@@ -1,7 +1,7 @@
 # core/prompt_builder.py
-from config import BASE_SYSTEM_PROMPT
-from skills.registry import load as load_skills
-from skills.registry import render_available_skills
+from agent_framework._config import BASE_SYSTEM_PROMPT
+from agent_framework.skills.registry import load as load_skills
+from agent_framework.skills.registry import render_available_skills
 
 
 def build_system_prompt(skill_names: list[str] | None = None) -> str:

@@ -1,5 +1,5 @@
-from tools.file_tools import _validate_path
-from tools.registry import register
+from agent_framework.tools.file_tools import _validate_path
+from agent_framework.tools.registry import register
 
 
 def edit_file(path: str, old_str: str, new_str: str, replace_all: bool = False) -> str:

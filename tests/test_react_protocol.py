@@ -1,11 +1,11 @@
 import pytest
 
-from config import AgentSettings
-from core.context import Context
-from core.logging import RunContext
-from core.react_protocol import ReactDecision, parse_react_json
-from core.runtime import AgentRuntime
-from llm.base import BaseLLMProvider, LLMResponse, ToolCall
+from agent_framework._config import AgentSettings
+from agent_framework.core.context import Context
+from agent_framework.core.logging import RunContext
+from agent_framework.core.react_protocol import ReactDecision, parse_react_json
+from agent_framework.core.runtime import AgentRuntime
+from agent_framework.llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
 
 class NoopProvider(BaseLLMProvider):

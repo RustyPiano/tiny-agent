@@ -1,4 +1,4 @@
-from llm.openai_provider import OpenAIProvider, _resolve_api_key
+from agent_framework.llm.openai_provider import OpenAIProvider, _resolve_api_key
 
 
 class _DummyCompletions:

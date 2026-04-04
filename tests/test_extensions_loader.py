@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from tools import registry
+from agent_framework.tools import registry
 
 
 def _project_extensions_dir() -> Path:
-    return Path(__file__).resolve().parents[1] / "extensions"
+    return Path(__file__).resolve().parents[1] / "agent_framework" / "extensions"
 
 
 @pytest.fixture(autouse=True)
@@ -18,7 +18,7 @@ def _clear_tool_registry():
 
 
 def test_load_project_hello_tool_extension():
-    from extensions.loader import load_extensions
+    from agent_framework.extensions.loader import load_extensions
 
     result = load_extensions(base_dir=_project_extensions_dir())
 
@@ -30,7 +30,7 @@ def test_load_project_hello_tool_extension():
 
 
 def test_extension_failure_does_not_stop_loading(tmp_path):
-    from extensions.loader import load_extensions
+    from agent_framework.extensions.loader import load_extensions
 
     ext_root = tmp_path / "extensions"
     tools_dir = ext_root / "tools"
@@ -41,7 +41,7 @@ def test_extension_failure_does_not_stop_loading(tmp_path):
         encoding="utf-8",
     )
     (tools_dir / "good_tool.py").write_text(
-        "from tools.registry import register as register_tool\n\n"
+        "from agent_framework.tools.registry import register as register_tool\n\n"
         "def _good_tool() -> str:\n"
         "    return '[ok] good'\n\n"
         "def register() -> None:\n"
@@ -68,7 +68,7 @@ def test_extension_failure_does_not_stop_loading(tmp_path):
 
 
 def test_missing_register_contract_reported(tmp_path):
-    from extensions.loader import load_extensions
+    from agent_framework.extensions.loader import load_extensions
 
     ext_root = tmp_path / "extensions"
     tools_dir = ext_root / "tools"
@@ -85,7 +85,7 @@ def test_missing_register_contract_reported(tmp_path):
 
 
 def test_non_callable_register_reported(tmp_path):
-    from extensions.loader import load_extensions
+    from agent_framework.extensions.loader import load_extensions
 
     ext_root = tmp_path / "extensions"
     tools_dir = ext_root / "tools"

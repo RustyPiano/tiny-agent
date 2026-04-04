@@ -1,10 +1,10 @@
 import json
 import os
 
-from tools.finish_tool import finish
-from tools.grep_tool import grep
-from tools.list_dir_tool import list_dir
-from tools.summarize_tool import summarize
+from agent_framework.tools.finish_tool import finish
+from agent_framework.tools.grep_tool import grep
+from agent_framework.tools.list_dir_tool import list_dir
+from agent_framework.tools.summarize_tool import summarize
 
 
 def test_finish_returns_json_payload_containing_response() -> None:

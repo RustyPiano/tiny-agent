@@ -12,20 +12,20 @@ Agent Framework 入口。
 import argparse
 import sys
 
-from config import AgentSettings
-from core.agent import run
-from core.logging import RunContext, log_event, setup_logging
-from extensions.loader import load_extensions
-from llm.factory import create_provider
-from skills import discover_skills
-from tools.bash_tool import register_bash_tool
-from tools.edit_file_tool import register_edit_file_tool
-from tools.file_tools import register_file_tools
-from tools.finish_tool import register_finish_tool
-from tools.grep_tool import register_grep_tool
-from tools.list_dir_tool import register_list_dir_tool
-from tools.skill_tool import register_skill_tool
-from tools.summarize_tool import register_summarize_tool
+from agent_framework._config import AgentSettings
+from agent_framework.core.agent import run
+from agent_framework.core.logging import RunContext, log_event, setup_logging
+from agent_framework.extensions.loader import load_extensions
+from agent_framework.llm.factory import create_provider
+from agent_framework.skills import discover_skills
+from agent_framework.tools.bash_tool import register_bash_tool
+from agent_framework.tools.edit_file_tool import register_edit_file_tool
+from agent_framework.tools.file_tools import register_file_tools
+from agent_framework.tools.finish_tool import register_finish_tool
+from agent_framework.tools.grep_tool import register_grep_tool
+from agent_framework.tools.list_dir_tool import register_list_dir_tool
+from agent_framework.tools.skill_tool import register_skill_tool
+from agent_framework.tools.summarize_tool import register_summarize_tool
 
 
 def _build_concise_event_printer():
@@ -213,7 +213,8 @@ def main() -> None:
                 log_event("session_start", run_ctx, input=user_input[:100])
             if ui_mode == "concise":
                 print()
-                ui_event_printer("▸ 开始处理")
+                if ui_event_printer is not None:
+                    ui_event_printer("▸ 开始处理")
             result = run(
                 user_input,
                 settings=settings,

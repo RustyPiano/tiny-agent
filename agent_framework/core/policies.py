@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum, auto
 
-from llm.base import LLMResponse
+from agent_framework.llm.base import LLMResponse
 
 
 class Step(Enum):

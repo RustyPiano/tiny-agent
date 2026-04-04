@@ -2,8 +2,8 @@ import os
 import pathlib
 import re
 
-import config
-from tools.registry import register
+from agent_framework import _config as config
+from agent_framework.tools.registry import register
 
 
 def grep(pattern: str, path: str) -> str:

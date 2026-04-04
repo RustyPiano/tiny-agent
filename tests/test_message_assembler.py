@@ -1,11 +1,11 @@
 from pathlib import Path
 
-import config
-from config import MAX_COMPACT_HISTORY_MESSAGES, SYSTEM_PROMPT_DYNAMIC_BOUNDARY
-from core.context import Context
-from core.message_assembler import assemble_messages
-from core.runtime import AgentRuntime
-from llm.base import BaseLLMProvider, LLMResponse
+from agent_framework import _config as config
+from agent_framework._config import MAX_COMPACT_HISTORY_MESSAGES, SYSTEM_PROMPT_DYNAMIC_BOUNDARY
+from agent_framework.core.context import Context
+from agent_framework.core.message_assembler import assemble_messages
+from agent_framework.core.runtime import AgentRuntime
+from agent_framework.llm.base import BaseLLMProvider, LLMResponse
 
 
 class _CaptureProvider(BaseLLMProvider):
@@ -220,7 +220,7 @@ def test_runtime_uses_history_compactor_module_output_in_prompt(monkeypatch):
 
     monkeypatch.setattr(config, "CONTEXT_SOFT_LIMIT_TOKENS", 1)
     monkeypatch.setattr(
-        "core.runtime.compact_history",
+        "agent_framework.core.runtime.compact_history",
         lambda history, max_records, summarize_fn: ["module-compact-line"],
     )
 

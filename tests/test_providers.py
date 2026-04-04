@@ -1,8 +1,8 @@
 # tests/test_providers.py
 """provider 格式转换单元测试，不需要真实 API key"""
 
-from llm.factory import create_provider
-from llm.openai_provider import OpenAIProvider, _to_openai_tool
+from agent_framework.llm.factory import create_provider
+from agent_framework.llm.openai_provider import OpenAIProvider, _to_openai_tool
 
 
 def test_to_openai_tool():
@@ -21,7 +21,7 @@ def test_to_openai_tool():
 
 
 def test_anthropic_format_tool_result():
-    from llm.anthropic_provider import AnthropicProvider
+    from agent_framework.llm.anthropic_provider import AnthropicProvider
 
     p = AnthropicProvider.__new__(AnthropicProvider)
     r = p.format_tool_result("call_abc", "hello output")
@@ -38,7 +38,7 @@ def test_openai_format_tool_result():
 
 
 def test_anthropic_tool_results_as_message():
-    from llm.anthropic_provider import AnthropicProvider
+    from agent_framework.llm.anthropic_provider import AnthropicProvider
 
     p = AnthropicProvider.__new__(AnthropicProvider)
     results = [
@@ -66,7 +66,7 @@ def test_openai_tool_results_as_message():
 
 
 def test_anthropic_block_to_dict_keeps_tool_result_fields():
-    from llm.anthropic_provider import _block_to_dict
+    from agent_framework.llm.anthropic_provider import _block_to_dict
 
     class _ToolResultBlock:
         type = "tool_result"

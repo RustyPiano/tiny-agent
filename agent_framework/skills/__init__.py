@@ -1,4 +1,4 @@
-from skills.registry import (
+from agent_framework.skills.registry import (
     clear_skills,
     discover_skills,
     get_skill_metadata,

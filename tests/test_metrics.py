@@ -4,7 +4,7 @@ import json
 import re
 from datetime import UTC, datetime, timedelta, timezone
 
-from core.metrics import MetricsCollector, RunMetrics
+from agent_framework.core.metrics import MetricsCollector, RunMetrics
 
 
 def test_summary_handles_type_invalid_values(tmp_path):

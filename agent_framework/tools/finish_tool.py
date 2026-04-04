@@ -1,6 +1,6 @@
 import json
 
-from tools.registry import register
+from agent_framework.tools.registry import register
 
 
 def finish(response: str) -> str:

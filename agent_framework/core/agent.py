@@ -3,23 +3,23 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from core.context import Context
-from core.logging import RunContext, log_event
-from core.prompt_builder import build_system_prompt
-from core.runtime import AgentRuntime
-from llm.base import BaseLLMProvider
-from llm.factory import create_provider
-from sessions import store as session_store
-from tools import registry as tool_registry
+from agent_framework.core.context import Context
+from agent_framework.core.logging import RunContext, log_event
+from agent_framework.core.prompt_builder import build_system_prompt
+from agent_framework.core.runtime import AgentRuntime
+from agent_framework.llm.base import BaseLLMProvider
+from agent_framework.llm.factory import create_provider
+from agent_framework.sessions import store as session_store
+from agent_framework.tools import registry as tool_registry
 
 if TYPE_CHECKING:
-    from config import AgentSettings
+    from agent_framework._config import AgentSettings
 
 
 def _get_provider_type(provider: BaseLLMProvider) -> str:
     """获取 provider 的类型标识"""
-    from llm.anthropic_provider import AnthropicProvider
-    from llm.openai_provider import OpenAIProvider
+    from agent_framework.llm.anthropic_provider import AnthropicProvider
+    from agent_framework.llm.openai_provider import OpenAIProvider
 
     if isinstance(provider, AnthropicProvider):
         return "anthropic"
@@ -35,7 +35,7 @@ def _resolve_settings_provider_runctx(
     session_id: str | None,
 ) -> tuple[AgentSettings, BaseLLMProvider, RunContext]:
     if settings is None:
-        from config import AgentSettings as _AS
+        from agent_framework._config import AgentSettings as _AS
 
         settings = _AS.from_env()
     if provider is None:

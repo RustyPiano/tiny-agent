@@ -1,7 +1,7 @@
 # tests/contracts/test_provider_contract.py
 """Provider 合约测试：所有 Provider 必须满足的行为规范"""
 
-from llm.base import BaseLLMProvider
+from agent_framework.llm.base import BaseLLMProvider
 
 
 class ProviderContractTests:
@@ -47,13 +47,13 @@ class ProviderContractTests:
 
 class TestAnthropicProviderContract(ProviderContractTests):
     def get_provider(self):
-        from llm.anthropic_provider import AnthropicProvider
+        from agent_framework.llm.anthropic_provider import AnthropicProvider
 
         return AnthropicProvider.__new__(AnthropicProvider)
 
 
 class TestOpenAIProviderContract(ProviderContractTests):
     def get_provider(self):
-        from llm.openai_provider import OpenAIProvider
+        from agent_framework.llm.openai_provider import OpenAIProvider
 
         return OpenAIProvider.__new__(OpenAIProvider)

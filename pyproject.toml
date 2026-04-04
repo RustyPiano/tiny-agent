@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-framework"
@@ -12,12 +12,18 @@ dependencies = [
     "openai>=1.40.0",
 ]
 
+[project.scripts]
+agent = "agent_framework.main:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6.0",
     "mypy>=1.10",
 ]
+
+[tool.setuptools.packages.find]
+include = ["agent_framework*"]
 
 [tool.ruff]
 line-length = 100
@@ -31,6 +37,7 @@ python_version = "3.11"
 strict = false
 warn_return_any = true
 warn_unused_configs = true
+files = ["agent_framework"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

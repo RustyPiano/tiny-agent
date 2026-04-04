@@ -1,8 +1,8 @@
 # tools/file_tools.py
 import pathlib
 
-import config
-from tools.registry import register
+from agent_framework import _config as config
+from agent_framework.tools.registry import register
 
 
 def _validate_path(path: str) -> tuple[pathlib.Path, str | None]:

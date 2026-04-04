@@ -1,5 +1,5 @@
-from core.security import SecurityGuard
-from tools.bash_tool import run_bash
+from agent_framework.core.security import SecurityGuard
+from agent_framework.tools.bash_tool import run_bash
 
 
 def test_security_guard_blocks_non_whitelisted_tool() -> None:
@@ -42,11 +42,11 @@ def test_run_bash_blocks_curl_with_absolute_path_bypass_style() -> None:
 
 
 def test_runtime_blocks_non_whitelisted_tool_call() -> None:
-    from config import AgentSettings
-    from core.context import Context
-    from core.logging import RunContext
-    from core.runtime import AgentRuntime
-    from llm.base import BaseLLMProvider, LLMResponse, ToolCall
+    from agent_framework._config import AgentSettings
+    from agent_framework.core.context import Context
+    from agent_framework.core.logging import RunContext
+    from agent_framework.core.runtime import AgentRuntime
+    from agent_framework.llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
     class NoopProvider(BaseLLMProvider):
         def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:

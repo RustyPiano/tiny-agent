@@ -4,8 +4,8 @@ import re
 import shlex
 import subprocess
 
-from config import OUTPUT_TRUNCATE
-from tools.registry import register
+from agent_framework._config import OUTPUT_TRUNCATE
+from agent_framework.tools.registry import register
 
 _BLOCKED_PATTERNS = [
     # 基础危险命令

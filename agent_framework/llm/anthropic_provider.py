@@ -1,7 +1,7 @@
 # llm/anthropic_provider.py
 import anthropic as _anthropic
 
-from llm.base import BaseLLMProvider, LLMResponse, ToolCall
+from agent_framework.llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
 
 class AnthropicProvider(BaseLLMProvider):

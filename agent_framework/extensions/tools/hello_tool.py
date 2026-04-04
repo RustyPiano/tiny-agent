@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tools.registry import register as register_tool
+from agent_framework.tools.registry import register as register_tool
 
 
 def _hello_tool(name: str = "world") -> str:
