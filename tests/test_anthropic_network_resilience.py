@@ -2,7 +2,6 @@
 """Anthropic network resilience tests: call_llm retry logic for Anthropic provider errors."""
 
 import time
-from unittest.mock import MagicMock, patch
 
 import httpx
 
@@ -28,7 +27,7 @@ def _make_rate_limit_error(msg: str = "Rate limit exceeded.") -> Exception:
 
 
 class FakeFailingThenRecoveringProvider(BaseLLMProvider):
-    """Provider that raises Anthropic network error on first N calls, then returns a valid response."""
+    """Raise Anthropic network errors for N calls, then recover."""
 
     def __init__(self, fail_count: int, error_factory):
         self.fail_count = fail_count
@@ -107,7 +106,7 @@ def test_call_llm_retries_on_anthropic_connection_error_and_recovers(monkeypatch
 
 
 def test_call_llm_returns_error_response_after_max_anthropic_retries(monkeypatch):
-    """call_llm returns structured error LLMResponse after exhausting retries on Anthropic errors."""
+    """call_llm returns structured error after Anthropic retries are exhausted."""
     monkeypatch.setattr(time, "sleep", lambda s: None)
 
     provider = FakeAlwaysFailingProvider(error_factory=_make_api_connection_error)

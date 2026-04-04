@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import time
 import threading
+import time
 from pathlib import Path
 
 from config import AgentSettings
@@ -77,7 +77,11 @@ def test_ui_event_printer_emits_turn_start(monkeypatch):
                 assistant_message={"role": "assistant", "content": "done"},
             )
 
-    runtime = _make_runtime(_EndTurnProvider(), _RecordingRegistry(), ui_event_printer=events.append)
+    runtime = _make_runtime(
+        _EndTurnProvider(),
+        _RecordingRegistry(),
+        ui_event_printer=events.append,
+    )
     result = runtime.run()
 
     assert result == "done"
@@ -106,7 +110,9 @@ def test_ui_event_printer_emits_tool_events():
             if self._call_count == 1:
                 return LLMResponse(
                     text="",
-                    tool_calls=[ToolCall(id="call_1", name="run_bash", inputs={"command": "echo hi"})],
+                    tool_calls=[
+                        ToolCall(id="call_1", name="run_bash", inputs={"command": "echo hi"})
+                    ],
                     stop_reason="tool_use",
                     assistant_message={"role": "assistant", "content": []},
                 )
@@ -138,7 +144,13 @@ def test_ui_event_printer_emits_max_turns_warning():
             self._call_count += 1
             return LLMResponse(
                 text="",
-                tool_calls=[ToolCall(id=f"call_{self._call_count}", name="run_bash", inputs={"command": "echo hi"})],
+                tool_calls=[
+                    ToolCall(
+                        id=f"call_{self._call_count}",
+                        name="run_bash",
+                        inputs={"command": "echo hi"},
+                    )
+                ],
                 stop_reason="tool_use",
                 assistant_message={"role": "assistant", "content": []},
             )
@@ -228,7 +240,10 @@ def test_ui_event_printer_emits_per_tool_details(tmp_path: Path):
             if name == "edit_file":
                 p = Path(inputs["path"])
                 text = p.read_text(encoding="utf-8")
-                p.write_text(text.replace(inputs["old_str"], inputs["new_str"], 1), encoding="utf-8")
+                p.write_text(
+                    text.replace(inputs["old_str"], inputs["new_str"], 1),
+                    encoding="utf-8",
+                )
                 return f"[ok] 已更新文件: {inputs['path']}"
             if name == "run_bash":
                 return "ok output line one\nok output line two"

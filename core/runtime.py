@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import difflib
+import json
 import threading
 import time
 from collections.abc import Callable
@@ -118,9 +118,13 @@ class AgentRuntime:
         self._hb_thread.start()
 
     def _heartbeat_loop(self, tool_name: str, start_time: float) -> None:
-        while not self._hb_stop.wait(10):
+        hb_stop = self._hb_stop
+        printer = self.ui_event_printer
+        if hb_stop is None or printer is None:
+            return
+        while not hb_stop.wait(10):
             elapsed = int(time.time() - start_time)
-            self.ui_event_printer(f"  ↳ {tool_name} 运行中 {elapsed}s…")
+            printer(f"  ↳ {tool_name} 运行中 {elapsed}s…")
 
     def _stop_heartbeat(self) -> None:
         if self._hb_stop is not None:
@@ -276,7 +280,11 @@ class AgentRuntime:
         estimated_tokens = self._estimate_context_tokens(messages)
         memory_text = self._load_memory_text()
         compacted_history = ""
-        soft_limit = getattr(self.settings, "context_soft_limit_tokens", config.CONTEXT_SOFT_LIMIT_TOKENS)
+        soft_limit = getattr(
+            self.settings,
+            "context_soft_limit_tokens",
+            config.CONTEXT_SOFT_LIMIT_TOKENS,
+        )
         if should_compact(estimated_tokens, soft_limit):
             compacted_history = self._compact_history(messages)
         dynamic_system = assemble_messages(
@@ -605,7 +613,9 @@ class AgentRuntime:
             if self.ui_event_printer is not None:
                 self.ui_event_printer(f"  • 工具 {tc.name} 开始")
             tool_start = time.time()
-            edit_before_text = self._safe_read_text(execute_inputs.get("path")) if tc.name == "edit_file" else None
+            edit_before_text = (
+                self._safe_read_text(execute_inputs.get("path")) if tc.name == "edit_file" else None
+            )
             self._start_heartbeat(tc.name, tool_start)
             try:
                 if tc.name == "run_bash":
@@ -743,7 +753,7 @@ class AgentRuntime:
                 self.persist_session()
                 log_event("run_end", self.run_ctx, stop_reason="max_turns")
                 if self.ui_event_printer is not None:
-                    self.ui_event_printer(f"  ⚠ 达到最大轮次")
+                    self.ui_event_printer("  ⚠ 达到最大轮次")
                 return f"[warn] 达到最大轮次 ({self.settings.max_turns})，任务可能未完成。"
             if step == Step.CALL_LLM:
                 self.state.turn += 1
@@ -792,7 +802,7 @@ class AgentRuntime:
                         summary = self._build_execution_summary()
                         if summary:
                             self.ui_event_printer(f"\n  📋 执行摘要\n{summary}")
-                        self.ui_event_printer(f"  ✓ 任务完成")
+                        self.ui_event_printer("  ✓ 任务完成")
                     return self._finish_response
                 self.state.react_format_retries = 0
                 packaged = self.provider.tool_results_as_message(results)
@@ -821,7 +831,7 @@ class AgentRuntime:
                                 summary = self._build_execution_summary()
                                 if summary:
                                     self.ui_event_printer(f"\n  📋 执行摘要\n{summary}")
-                                self.ui_event_printer(f"  ✓ 任务完成")
+                                self.ui_event_printer("  ✓ 任务完成")
                             return self._finish_response
                         packaged = self.provider.tool_results_as_message(results)
                         self.ctx.add_tool_results(packaged)
@@ -841,7 +851,7 @@ class AgentRuntime:
                             summary = self._build_execution_summary()
                             if summary:
                                 self.ui_event_printer(f"\n  📋 执行摘要\n{summary}")
-                            self.ui_event_printer(f"  ✓ 任务完成")
+                            self.ui_event_printer("  ✓ 任务完成")
                         return react_decision.thought
                     if (
                         react_decision is None
@@ -864,13 +874,14 @@ class AgentRuntime:
                         self.state.response = None
                         continue
                 self.state.end_turn_react_parse_retries = 0
-                self._print_turn_summary(current_response)
+                if current_response is not None:
+                    self._print_turn_summary(current_response)
                 self.persist_session()
                 log_event("run_end", self.run_ctx, stop_reason="end_turn")
                 if self.ui_event_printer is not None:
                     summary = self._build_execution_summary()
                     if summary:
                         self.ui_event_printer(f"\n  📋 执行摘要\n{summary}")
-                    self.ui_event_printer(f"  ✓ 任务完成")
+                    self.ui_event_printer("  ✓ 任务完成")
                 return self.final_response_text()
             raise RuntimeError(f"Unhandled runtime step: {step!r}")

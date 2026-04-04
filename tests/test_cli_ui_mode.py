@@ -85,7 +85,10 @@ def test_show_turns_fallback_to_detailed(monkeypatch, capsys):
 
 def test_ui_concise_takes_priority_over_show_turns(monkeypatch, capsys):
     captured_kwargs, out = _run_main_with_args(
-        monkeypatch, capsys, ["--ui", "concise", "--show-turns"], turn_output="[t1] stop=end_turn tools=0"
+        monkeypatch,
+        capsys,
+        ["--ui", "concise", "--show-turns"],
+        turn_output="[t1] stop=end_turn tools=0",
     )
 
     assert captured_kwargs["show_turns"] is False

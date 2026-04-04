@@ -283,16 +283,6 @@ def test_runtime_methods_are_override_friendly():
 def test_runtime_override_execute_tools_and_persist_session():
     """测试 execute_tools/persist_session 也可覆盖"""
 
-    class NoopProvider(BaseLLMProvider):
-        def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
-            raise AssertionError("should not call provider.chat when call_llm is overridden")
-
-        def format_tool_result(self, tool_call_id: str, content: str) -> dict:
-            return {"type": "tool_result", "tool_use_id": tool_call_id, "content": content}
-
-        def tool_results_as_message(self, results: list[dict]) -> list[dict]:
-            return [{"role": "user", "content": results}]
-
     class PersistPolicy(RuntimePolicy):
         def next_step(self, turn: int, max_turns: int, response: LLMResponse | None) -> Step:
             if response is None:

@@ -192,7 +192,15 @@ def test_runtime_prefers_settings_workspace_memory_before_global(tmp_path: Path,
     provider = _CaptureProvider()
     runtime = AgentRuntime(
         provider=provider,
-        settings=type("S", (), {"max_turns": 20, "max_tokens": 16000, "workspace_root": settings_root})(),
+        settings=type(
+            "S",
+            (),
+            {
+                "max_turns": 20,
+                "max_tokens": 16000,
+                "workspace_root": settings_root,
+            },
+        )(),
         ctx=Context(initial_messages=[{"role": "user", "content": "hello"}]),
         tool_registry=_NoopRegistry(),
         session_store=_NoopStore(),

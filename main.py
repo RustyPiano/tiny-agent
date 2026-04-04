@@ -162,7 +162,9 @@ def main() -> None:
     ui_event_printer = _build_concise_event_printer() if ui_mode == "concise" else None
 
     # concise 模式默认 WARNING 级别，避免 INFO 日志淹没界面
-    log_level = args.log_level if args.log_level is not None else ("INFO" if show_turns else "WARNING")
+    log_level = (
+        args.log_level if args.log_level is not None else ("INFO" if show_turns else "WARNING")
+    )
 
     # 配置日志
     setup_logging(level=log_level, fmt=args.log_format)
@@ -189,9 +191,16 @@ def main() -> None:
 
     skills = [s.strip() for s in args.skills.split(",") if s.strip()]
     if ui_mode == "concise":
-        print(f"\nAgent 已启动 [{settings.provider_type}/{settings.model}]，输入任务（Ctrl+C 退出）\n")
+        print(
+            f"\nAgent 已启动 [{settings.provider_type}/{settings.model}]，输入任务（Ctrl+C 退出）\n"
+        )
     else:
-        log_event("agent_start", RunContext(), provider=settings.provider_type, model=settings.model)
+        log_event(
+            "agent_start",
+            RunContext(),
+            provider=settings.provider_type,
+            model=settings.model,
+        )
         print("Agent 已启动，输入任务（Ctrl+C 退出）：\n")
 
     while True:
@@ -217,9 +226,9 @@ def main() -> None:
                 ui_event_printer=ui_event_printer,
             )
             if ui_mode == "concise":
-                print(f"\n{'─'*40}")
+                print(f"\n{'─' * 40}")
                 print(result)
-                print(f"{'─'*40}\n")
+                print(f"{'─' * 40}\n")
             else:
                 print(f"\nAgent: {result}\n")
         except KeyboardInterrupt:
