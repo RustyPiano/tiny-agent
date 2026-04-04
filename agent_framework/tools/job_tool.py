@@ -1,5 +1,6 @@
 import json
 import os
+import pathlib
 import signal
 import subprocess
 import tempfile
@@ -8,6 +9,8 @@ import time
 import uuid
 from dataclasses import dataclass
 
+from agent_framework import _config as config
+from agent_framework.tools.bash_tool import _is_blocked
 from agent_framework.tools.registry import register
 
 
@@ -19,6 +22,11 @@ class _JobRecord:
     log_path: str
     cancelled: bool = False
     cancel_signal: str | None = None
+    finished_at: float | None = None
+
+
+_MAX_JOB_RECORDS = 256
+_TERMINAL_JOB_TTL_SEC = 3600.0
 
 
 _JOBS: dict[str, _JobRecord] = {}
@@ -40,11 +48,78 @@ def _get_job(job_id: str) -> _JobRecord | None:
         return _JOBS.get(job_id)
 
 
+def _resolve_workdir(workdir: str) -> tuple[str | None, str | None]:
+    try:
+        resolved = pathlib.Path(workdir).resolve()
+    except Exception as e:
+        return None, f"invalid workdir: {e}"
+
+    try:
+        resolved.relative_to(config.WORKSPACE_ROOT)
+    except ValueError:
+        return None, (
+            f"workdir is outside workspace root: {resolved}; workspace_root={config.WORKSPACE_ROOT}"
+        )
+
+    if not resolved.exists() or not resolved.is_dir():
+        return None, f"workdir must be an existing directory: {resolved}"
+
+    return str(resolved), None
+
+
+def _cleanup_jobs_locked() -> None:
+    now = time.time()
+    stale_ids: list[str] = []
+    for job_id, record in _JOBS.items():
+        if record.finished_at is None:
+            continue
+        if (now - record.finished_at) > _TERMINAL_JOB_TTL_SEC:
+            stale_ids.append(job_id)
+
+    for job_id in stale_ids:
+        record = _JOBS.pop(job_id, None)
+        if record is None:
+            continue
+        try:
+            os.remove(record.log_path)
+        except Exception:
+            pass
+
+    if len(_JOBS) <= _MAX_JOB_RECORDS:
+        return
+
+    terminal = sorted(
+        (
+            (job_id, r)
+            for job_id, r in _JOBS.items()
+            if r.finished_at is not None or r.process.poll() is not None
+        ),
+        key=lambda pair: pair[1].finished_at or pair[1].started_at,
+    )
+    while len(_JOBS) > _MAX_JOB_RECORDS and terminal:
+        drop_id, record = terminal.pop(0)
+        _JOBS.pop(drop_id, None)
+        try:
+            os.remove(record.log_path)
+        except Exception:
+            pass
+
+
 def start_job(command: str, workdir: str | None = None) -> str:
     if not isinstance(command, str) or not command.strip():
         return _err("invalid_argument", "command must be a non-empty string")
     if workdir is not None and not isinstance(workdir, str):
         return _err("invalid_argument", "workdir must be a string or null")
+
+    block_reason = _is_blocked(command)
+    if block_reason:
+        return _err("invalid_argument", f"blocked command: {block_reason}")
+
+    resolved_workdir = None
+    if workdir is not None:
+        resolved_workdir, err = _resolve_workdir(workdir)
+        if err is not None:
+            return _err("invalid_argument", err)
 
     job_id = f"job_{uuid.uuid4().hex[:12]}"
     started_at = time.time()
@@ -60,7 +135,7 @@ def start_job(command: str, workdir: str | None = None) -> str:
                 "shell": True,
                 "stdout": log_fp,
                 "stderr": subprocess.STDOUT,
-                "cwd": workdir,
+                "cwd": resolved_workdir,
             }
             if os.name == "posix":
                 popen_kwargs["preexec_fn"] = os.setsid
@@ -75,6 +150,7 @@ def start_job(command: str, workdir: str | None = None) -> str:
         log_path=log_path,
     )
     with _LOCK:
+        _cleanup_jobs_locked()
         _JOBS[job_id] = record
 
     return _ok(
@@ -92,16 +168,20 @@ def poll_job(job_id: str) -> str:
     if not isinstance(job_id, str) or not job_id:
         return _err("invalid_argument", "job_id must be a non-empty string")
 
-    record = _get_job(job_id)
-    if record is None:
-        return _err("job_not_found", f"job not found: {job_id}")
+    with _LOCK:
+        _cleanup_jobs_locked()
+        record = _JOBS.get(job_id)
+        if record is None:
+            return _err("job_not_found", f"job not found: {job_id}")
 
-    exit_code = record.process.poll()
-    status = "running"
-    if exit_code is not None:
-        status = "cancelled" if record.cancelled else "exited"
+        exit_code = record.process.poll()
+        status = "running"
+        if exit_code is not None:
+            status = "cancelled" if record.cancelled else "exited"
+            if record.finished_at is None:
+                record.finished_at = time.time()
 
-    duration_sec = max(0.0, time.time() - record.started_at)
+        duration_sec = max(0.0, time.time() - record.started_at)
     return _ok(
         {
             "job_id": record.job_id,
@@ -121,18 +201,21 @@ def read_job_log(job_id: str, offset: int = 0, limit: int = 4000) -> str:
     if not isinstance(limit, int) or limit < 0:
         return _err("invalid_argument", "limit must be an integer >= 0")
 
-    record = _get_job(job_id)
-    if record is None:
-        return _err("job_not_found", f"job not found: {job_id}")
+    with _LOCK:
+        _cleanup_jobs_locked()
+        record = _JOBS.get(job_id)
+        if record is None:
+            return _err("job_not_found", f"job not found: {job_id}")
+        log_path = record.log_path
 
     try:
-        with open(record.log_path, "rb") as fp:
+        with open(log_path, "rb") as fp:
             fp.seek(offset)
             chunk = fp.read(limit)
             next_offset = offset + len(chunk)
             file_size = fp.seek(0, os.SEEK_END)
     except Exception as e:
-        return _err("invalid_argument", f"failed to read log: {e}")
+        return _err("io_error", f"failed to read log: {e}")
 
     return _ok(
         {
@@ -151,47 +234,53 @@ def cancel_job(job_id: str, force: bool = False) -> str:
     if not isinstance(force, bool):
         return _err("invalid_argument", "force must be a boolean")
 
-    record = _get_job(job_id)
-    if record is None:
-        return _err("job_not_found", f"job not found: {job_id}")
-
-    if record.process.poll() is not None:
-        return _err("already_finished", f"job already finished: {job_id}")
+    with _LOCK:
+        _cleanup_jobs_locked()
+        record = _JOBS.get(job_id)
+        if record is None:
+            return _err("job_not_found", f"job not found: {job_id}")
+        if record.process.poll() is not None:
+            if record.finished_at is None:
+                record.finished_at = time.time()
+            return _err("already_finished", f"job already finished: {job_id}")
+        pid = record.process.pid
+        process = record.process
 
     used_signal = "SIGKILL" if force else "SIGTERM"
     sig_value = signal.SIGKILL if force else signal.SIGTERM
 
     try:
         if os.name == "posix":
-            os.killpg(os.getpgid(record.process.pid), sig_value)
+            os.killpg(os.getpgid(pid), sig_value)
         elif force:
-            record.process.kill()
+            process.kill()
         else:
-            record.process.terminate()
+            process.terminate()
 
         try:
-            record.process.wait(timeout=2.0)
+            process.wait(timeout=2.0)
         except subprocess.TimeoutExpired:
             if not force:
                 used_signal = "SIGKILL"
                 if os.name == "posix":
-                    os.killpg(os.getpgid(record.process.pid), signal.SIGKILL)
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
                 else:
-                    record.process.kill()
-            record.process.wait(timeout=2.0)
+                    process.kill()
+            process.wait(timeout=2.0)
     except Exception as e:
-        return _err("invalid_argument", f"failed to cancel job: {e}")
+        return _err("cancel_failed", f"failed to cancel job: {e}")
 
     with _LOCK:
         record.cancelled = True
         record.cancel_signal = used_signal
+        record.finished_at = time.time()
 
     return _ok(
         {
             "job_id": record.job_id,
             "status": "cancelled",
             "signal": used_signal,
-            "exit_code": record.process.poll(),
+            "exit_code": process.poll(),
         }
     )
 
