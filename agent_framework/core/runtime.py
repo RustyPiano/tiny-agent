@@ -268,6 +268,71 @@ class AgentRuntime:
             self.ui_event_printer(f"    ↳ 最终回复 {lines} 行")
             return
 
+        if tool_name == "start_job":
+            try:
+                payload = json.loads(output_text)
+            except (json.JSONDecodeError, TypeError):
+                payload = None
+            if isinstance(payload, dict):
+                job_id = payload.get("job_id") or inputs.get("job_id") or "<unknown>"
+                job_status = payload.get("status") or "unknown"
+                self.ui_event_printer(f"    ↳ job={job_id} status={job_status}")
+                return
+
+        if tool_name == "poll_job":
+            try:
+                payload = json.loads(output_text)
+            except (json.JSONDecodeError, TypeError):
+                payload = None
+            if isinstance(payload, dict):
+                job_id = payload.get("job_id") or inputs.get("job_id") or "<unknown>"
+                job_status = payload.get("status") or "unknown"
+                exit_code = payload.get("exit_code")
+                if exit_code is None:
+                    self.ui_event_printer(f"    ↳ job={job_id} status={job_status}")
+                else:
+                    self.ui_event_printer(
+                        f"    ↳ job={job_id} status={job_status} exit={exit_code}"
+                    )
+                return
+
+        if tool_name == "read_job_log":
+            try:
+                payload = json.loads(output_text)
+            except (json.JSONDecodeError, TypeError):
+                payload = None
+            if isinstance(payload, dict):
+                job_id = payload.get("job_id") or inputs.get("job_id") or "<unknown>"
+                start_offset = payload.get("offset", inputs.get("offset"))
+                next_offset = payload.get("next_offset")
+                bytes_read = payload.get("bytes_read")
+                preview = payload.get("preview", "")
+                if not isinstance(preview, str):
+                    preview = str(preview)
+                preview_text = self._preview_first_line(preview, max_len=80)
+                self.ui_event_printer(
+                    "    ↳ "
+                    f"job={job_id} bytes={bytes_read} offset={start_offset}->{next_offset} "
+                    f"preview={preview_text}"
+                )
+                return
+
+        if tool_name == "cancel_job":
+            try:
+                payload = json.loads(output_text)
+            except (json.JSONDecodeError, TypeError):
+                payload = None
+            if isinstance(payload, dict):
+                job_id = payload.get("job_id") or inputs.get("job_id") or "<unknown>"
+                cancelled = payload.get("cancelled")
+                if isinstance(cancelled, bool):
+                    cancelled = str(cancelled).lower()
+                job_status = payload.get("status")
+                self.ui_event_printer(
+                    f"    ↳ job={job_id} cancelled={cancelled} status={job_status}"
+                )
+                return
+
         self.ui_event_printer(f"    ↳ 状态={status} 输出={self._preview_first_line(output_text)}")
 
     def next_step(self, response: LLMResponse | None) -> Step:
