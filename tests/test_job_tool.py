@@ -79,6 +79,9 @@ def test_read_job_log_uses_byte_offsets_and_next_offset(tmp_path) -> None:
     assert next_chunk["ok"] is True
     assert next_chunk["offset"] == chunk["next_offset"]
     assert next_chunk["next_offset"] >= next_chunk["offset"]
+    assert isinstance(next_chunk["bytes_read"], int)
+    assert next_chunk["bytes_read"] >= 0
+    assert isinstance(next_chunk["preview"], str)
 
 
 def test_read_job_log_mid_multibyte_offset_is_deterministic(tmp_path) -> None:
@@ -150,6 +153,14 @@ def test_start_job_blocks_dangerous_commands_with_structured_error() -> None:
     assert "blocked" in result["message"].lower()
 
 
+def test_start_job_rejects_detached_background_operator() -> None:
+    result = json.loads(start_job('python3 -c "import time; time.sleep(5)" &'))
+
+    assert result["ok"] is False
+    assert result["error"] == "invalid_argument"
+    assert "background" in result["message"].lower() or "detached" in result["message"].lower()
+
+
 def test_start_job_rejects_outside_workspace_workdir(tmp_path) -> None:
     outside = pathlib.Path("/")
     result = json.loads(start_job("python3 -c \"print('x')\"", workdir=str(outside)))
@@ -213,3 +224,20 @@ def test_cancel_already_finished_job_returns_already_finished(tmp_path) -> None:
     result = json.loads(cancel_job(job_id))
     assert result["ok"] is False
     assert result["error"] == "already_finished"
+
+
+def test_start_job_rejects_when_running_jobs_exceed_cap(monkeypatch, tmp_path) -> None:
+    from agent_framework.tools import job_tool
+
+    with job_tool._LOCK:
+        baseline_running = sum(1 for r in job_tool._JOBS.values() if r.process.poll() is None)
+    monkeypatch.setattr(job_tool, "_MAX_RUNNING_JOBS", baseline_running + 1)
+
+    first = json.loads(start_job('python3 -c "import time; time.sleep(2)"', workdir=str(tmp_path)))
+    assert first["ok"] is True
+
+    second = json.loads(start_job('python3 -c "import time; time.sleep(2)"', workdir=str(tmp_path)))
+    assert second["ok"] is False
+    assert second["error"] == "too_many_running_jobs"
+
+    _ = cancel_job(first["job_id"])

@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 
 from agent_framework import _config as config
-from agent_framework.tools.bash_tool import _is_blocked
+from agent_framework.tools.bash_tool import _is_blocked, _is_detached_command
 from agent_framework.tools.registry import register
 
 
@@ -27,6 +27,7 @@ class _JobRecord:
 
 _MAX_JOB_RECORDS = 256
 _TERMINAL_JOB_TTL_SEC = 3600.0
+_MAX_RUNNING_JOBS = 16
 
 
 _JOBS: dict[str, _JobRecord] = {}
@@ -83,6 +84,16 @@ def _cleanup_jobs_locked() -> None:
         except Exception:
             pass
 
+
+def _running_jobs_count_locked() -> int:
+    running = 0
+    for record in _JOBS.values():
+        if record.process.poll() is None:
+            running += 1
+        elif record.finished_at is None:
+            record.finished_at = time.time()
+    return running
+
     if len(_JOBS) <= _MAX_JOB_RECORDS:
         return
 
@@ -112,6 +123,10 @@ def start_job(command: str, workdir: str | None = None) -> str:
     block_reason = _is_blocked(command)
     if block_reason:
         return _err("invalid_argument", f"blocked command: {block_reason}")
+    if _is_detached_command(command):
+        return _err(
+            "invalid_argument", "background/detached operator '&' is not allowed in start_job"
+        )
 
     resolved_workdir = None
     if workdir is not None:
@@ -119,36 +134,42 @@ def start_job(command: str, workdir: str | None = None) -> str:
         if err is not None:
             return _err("invalid_argument", err)
 
-    job_id = f"job_{uuid.uuid4().hex[:12]}"
-    started_at = time.time()
-
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="wb", delete=False, prefix="agent_job_", suffix=".log"
-        ) as fp:
-            log_path = fp.name
-
-        with open(log_path, "ab") as log_fp:
-            popen_kwargs: dict = {
-                "shell": True,
-                "stdout": log_fp,
-                "stderr": subprocess.STDOUT,
-                "cwd": resolved_workdir,
-            }
-            if os.name == "posix":
-                popen_kwargs["preexec_fn"] = os.setsid
-            process = subprocess.Popen(command, **popen_kwargs)
-    except Exception as e:
-        return _err("spawn_failed", str(e))
-
-    record = _JobRecord(
-        job_id=job_id,
-        process=process,
-        started_at=started_at,
-        log_path=log_path,
-    )
     with _LOCK:
         _cleanup_jobs_locked()
+        if _running_jobs_count_locked() >= _MAX_RUNNING_JOBS:
+            return _err(
+                "too_many_running_jobs",
+                f"running jobs exceed limit: {_MAX_RUNNING_JOBS}",
+            )
+
+        job_id = f"job_{uuid.uuid4().hex[:12]}"
+        started_at = time.time()
+
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb", delete=False, prefix="agent_job_", suffix=".log"
+            ) as fp:
+                log_path = fp.name
+
+            with open(log_path, "ab") as log_fp:
+                popen_kwargs: dict = {
+                    "shell": True,
+                    "stdout": log_fp,
+                    "stderr": subprocess.STDOUT,
+                    "cwd": resolved_workdir,
+                }
+                if os.name == "posix":
+                    popen_kwargs["preexec_fn"] = os.setsid
+                process = subprocess.Popen(command, **popen_kwargs)
+        except Exception as e:
+            return _err("spawn_failed", str(e))
+
+        record = _JobRecord(
+            job_id=job_id,
+            process=process,
+            started_at=started_at,
+            log_path=log_path,
+        )
         _JOBS[job_id] = record
 
     return _ok(
@@ -220,8 +241,10 @@ def read_job_log(job_id: str, offset: int = 0, limit: int = 4000) -> str:
             "job_id": record.job_id,
             "offset": offset,
             "next_offset": next_offset,
+            "bytes_read": len(chunk),
             "eof": next_offset >= file_size,
             "content": chunk.decode("utf-8", errors="replace"),
+            "preview": chunk.decode("utf-8", errors="replace")[:200],
         }
     )
 
