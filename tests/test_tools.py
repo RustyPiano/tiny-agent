@@ -110,6 +110,18 @@ def test_bash_rejects_background_operator_not_only_at_end():
     assert "start_job" in result
 
 
+def test_bash_allows_fd_redirection_2_to_1_not_detached():
+    result = run_bash("python3 -c \"import sys; sys.stderr.write('redir-ok\\n')\" 2>&1")
+
+    assert "[blocked]" not in result
+    assert "redir-ok" in result
+
+
+def test_detached_parser_allows_non_background_ampersand_forms():
+    assert bash_tool._is_detached_command("echo hi >&2") is False
+    assert bash_tool._is_detached_command("ls /nonexistent |& cat") is False
+
+
 def test_bash_missing_timeout_binary_returns_platform_hint(monkeypatch):
     monkeypatch.setattr(bash_tool.shutil, "which", lambda _: None)
     monkeypatch.setattr(bash_tool.sys, "platform", "darwin")

@@ -114,8 +114,18 @@ def _is_detached_command(command: str) -> bool:
         if ch == "&":
             prev_char = command[i - 1] if i > 0 else ""
             next_char = command[i + 1] if i + 1 < len(command) else ""
-            if prev_char != "&" and next_char != "&":
-                return True
+
+            # 允许 &&
+            if prev_char == "&" or next_char == "&":
+                continue
+
+            # 允许重定向相关形式：2>&1、>&2、&>file、<&0、|&
+            if prev_char in {">", "<", "|"}:
+                continue
+            if next_char == ">":
+                continue
+
+            return True
 
     return False
 
