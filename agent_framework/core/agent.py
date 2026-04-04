@@ -127,4 +127,6 @@ def _run_with_runtime(
         turn_printer=turn_printer,
         ui_event_printer=ui_event_printer,
     )
+    if settings.enable_subagent_flow:
+        runtime.enable_subagent_flow(tasks=["task_001"])
     return runtime.run()

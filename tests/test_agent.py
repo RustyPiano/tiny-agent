@@ -560,3 +560,71 @@ def test_run_passes_subagent_flow_flag_to_prompt_builder(monkeypatch):
 
     assert result == "ok"
     assert captured["enable_subagent_flow"] is True
+
+
+def test_run_activates_runtime_subagent_flow_with_default_seed(monkeypatch):
+    provider = MockProvider(
+        [
+            LLMResponse(
+                text="ok",
+                tool_calls=[],
+                stop_reason="end_turn",
+                assistant_message={"role": "assistant", "content": "ok"},
+            )
+        ]
+    )
+
+    class RecordingRuntime:
+        last_instance = None
+
+        def __init__(self, **kwargs):
+            _ = kwargs
+            self.seed_tasks = None
+            RecordingRuntime.last_instance = self
+
+        def enable_subagent_flow(self, tasks: list[str]) -> None:
+            self.seed_tasks = list(tasks)
+
+        def run(self) -> str:
+            return "ok"
+
+    monkeypatch.setattr("agent_framework.core.agent.AgentRuntime", RecordingRuntime)
+    settings = AgentSettings(enable_subagent_flow=True)
+
+    result = run("hello", provider=provider, settings=settings)
+
+    assert result == "ok"
+    assert RecordingRuntime.last_instance is not None
+    assert RecordingRuntime.last_instance.seed_tasks == ["task_001"]
+
+
+def test_run_path_handle_flow_result_not_disabled_when_flag_enabled(monkeypatch):
+    provider = MockProvider(
+        [
+            LLMResponse(
+                text="unused",
+                tool_calls=[],
+                stop_reason="end_turn",
+                assistant_message={"role": "assistant", "content": "unused"},
+            )
+        ]
+    )
+
+    class FlowCheckRuntime(AgentRuntime):
+        def run(self) -> str:
+            result = self.handle_flow_result(
+                {
+                    "task_id": "task_001",
+                    "phase": "implement",
+                    "status": "NEEDS_CONTEXT",
+                    "details": "flow ok",
+                }
+            )
+            return result.get("message", "")
+
+    monkeypatch.setattr("agent_framework.core.agent.AgentRuntime", FlowCheckRuntime)
+    settings = AgentSettings(enable_subagent_flow=True)
+
+    result = run("hello", provider=provider, settings=settings)
+
+    assert result == "flow ok"
