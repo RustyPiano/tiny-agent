@@ -24,6 +24,7 @@ from agent_framework.core.policies import DefaultRuntimePolicy, RuntimePolicy, S
 from agent_framework.core.react_protocol import ReactDecision, parse_react_json_with_error
 from agent_framework.core.sandbox import sandbox_cwd
 from agent_framework.core.security import SecurityGuard
+from agent_framework.core.subagent_flow import SubagentFlowState
 from agent_framework.llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
 if TYPE_CHECKING:
@@ -91,6 +92,7 @@ class AgentRuntime:
         self._hb_stop: threading.Event | None = None
         self._hb_thread: threading.Thread | None = None
         self._tool_call_log: list[dict] = []
+        self._subagent_flow_state: SubagentFlowState | None = None
         allowed_tools: set[str] = set()
         if tool_registry is not None:
             list_tools = getattr(tool_registry, "list_tools", None)
@@ -107,6 +109,28 @@ class AgentRuntime:
                         if isinstance(schema_name, str) and schema_name:
                             allowed_tools.add(schema_name)
         self.security_guard = SecurityGuard(allowed_tools=allowed_tools)
+
+    def enable_subagent_flow(self, tasks: list[str]) -> None:
+        self._subagent_flow_state = SubagentFlowState(tasks=list(tasks))
+
+    def handle_flow_result(self, payload: dict) -> dict:
+        if not isinstance(payload, dict):
+            return {
+                "ok": False,
+                "next_action": "wait_for_context",
+                "phase": "implement",
+                "message": "payload must be a dict",
+            }
+
+        if self._subagent_flow_state is None:
+            return {
+                "ok": False,
+                "next_action": "wait_for_context",
+                "phase": "implement",
+                "message": "subagent flow not enabled",
+            }
+
+        return self._subagent_flow_state.handle_payload(payload)
 
     def _start_heartbeat(self, tool_name: str, start_time: float) -> None:
         if self.ui_event_printer is None:
@@ -186,6 +210,28 @@ class AgentRuntime:
             elif line.startswith("- "):
                 removed += 1
         return added, removed
+
+    def _parse_output_json_dict(self, output_text: str) -> dict | None:
+        try:
+            payload = json.loads(output_text)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
+    def _job_error_suffix(self, payload: dict) -> str:
+        status_value = payload.get("status")
+        if not isinstance(status_value, str):
+            return ""
+        if status_value.lower() not in {"failed", "error", "timeout", "cancelled"}:
+            return ""
+        error_value = payload.get("error")
+        if error_value in (None, ""):
+            error_value = payload.get("message")
+        if error_value in (None, ""):
+            return ""
+        return f" error={self._truncate(str(error_value), 80)}"
 
     def _emit_tool_detail(
         self,
@@ -267,6 +313,65 @@ class AgentRuntime:
             lines = self._line_count(output_text)
             self.ui_event_printer(f"    ↳ 最终回复 {lines} 行")
             return
+
+        if tool_name == "start_job":
+            payload = self._parse_output_json_dict(output_text)
+            if isinstance(payload, dict):
+                job_id = payload.get("job_id") or inputs.get("job_id") or "<unknown>"
+                job_status = payload.get("status") or "unknown"
+                self.ui_event_printer(
+                    f"    ↳ job={job_id} status={job_status}{self._job_error_suffix(payload)}"
+                )
+                return
+
+        if tool_name == "poll_job":
+            payload = self._parse_output_json_dict(output_text)
+            if isinstance(payload, dict):
+                job_id = payload.get("job_id") or inputs.get("job_id") or "<unknown>"
+                job_status = payload.get("status") or "unknown"
+                exit_code = payload.get("exit_code")
+                error_suffix = self._job_error_suffix(payload)
+                if exit_code is None:
+                    self.ui_event_printer(f"    ↳ job={job_id} status={job_status}{error_suffix}")
+                else:
+                    self.ui_event_printer(
+                        f"    ↳ job={job_id} status={job_status} exit={exit_code}{error_suffix}"
+                    )
+                return
+
+        if tool_name == "read_job_log":
+            payload = self._parse_output_json_dict(output_text)
+            if isinstance(payload, dict):
+                job_id = payload.get("job_id") or inputs.get("job_id") or "<unknown>"
+                start_offset = payload.get("offset", inputs.get("offset"))
+                next_offset = payload.get("next_offset")
+                bytes_read = payload.get("bytes_read")
+                job_status = payload.get("status")
+                preview = payload.get("preview", "")
+                if not isinstance(preview, str):
+                    preview = str(preview)
+                preview_text = self._preview_first_line(preview, max_len=80)
+                status_part = f" status={job_status}" if job_status is not None else ""
+                self.ui_event_printer(
+                    "    ↳ "
+                    f"job={job_id} bytes={bytes_read} offset={start_offset}->{next_offset} "
+                    f"preview={preview_text}{status_part}{self._job_error_suffix(payload)}"
+                )
+                return
+
+        if tool_name == "cancel_job":
+            payload = self._parse_output_json_dict(output_text)
+            if isinstance(payload, dict):
+                job_id = payload.get("job_id") or inputs.get("job_id") or "<unknown>"
+                cancelled = payload.get("cancelled")
+                if isinstance(cancelled, bool):
+                    cancelled = str(cancelled).lower()
+                job_status = payload.get("status")
+                self.ui_event_printer(
+                    f"    ↳ job={job_id} cancelled={cancelled} status={job_status}"
+                    f"{self._job_error_suffix(payload)}"
+                )
+                return
 
         self.ui_event_printer(f"    ↳ 状态={status} 输出={self._preview_first_line(output_text)}")
 

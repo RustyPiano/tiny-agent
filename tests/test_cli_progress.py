@@ -350,3 +350,140 @@ def test_ui_event_printer_shows_bash_status_and_preview():
 
     assert any("状态=timeout" in e for e in events)
     assert any("输出=" in e for e in events)
+
+
+def test_emit_tool_detail_start_job_shows_job_id_and_status():
+    events: list[str] = []
+    runtime = _make_runtime(_NoopProvider(), _RecordingRegistry(), ui_event_printer=events.append)
+
+    runtime._emit_tool_detail(
+        "start_job",
+        {},
+        '{"job_id":"job_123","status":"queued"}',
+    )
+
+    assert any("job=" in e and "status=" in e and "job_123" in e and "queued" in e for e in events)
+
+
+def test_emit_tool_detail_poll_job_shows_status_and_exit_code_when_available():
+    events: list[str] = []
+    runtime = _make_runtime(_NoopProvider(), _RecordingRegistry(), ui_event_printer=events.append)
+
+    runtime._emit_tool_detail(
+        "poll_job",
+        {"job_id": "job_123"},
+        '{"status":"finished","exit_code":0}',
+    )
+
+    assert any(
+        "job=" in e and "status=" in e and "exit=" in e and "finished" in e and "0" in e
+        for e in events
+    )
+
+
+def test_emit_tool_detail_read_job_log_shows_bytes_offset_progression_preview():
+    events: list[str] = []
+    runtime = _make_runtime(_NoopProvider(), _RecordingRegistry(), ui_event_printer=events.append)
+
+    runtime._emit_tool_detail(
+        "read_job_log",
+        {"job_id": "job_123", "offset": 120},
+        '{"bytes_read":64,"next_offset":184,"preview":"line1\\nline2"}',
+    )
+
+    assert any(
+        "job=" in e
+        and "bytes=" in e
+        and "offset=" in e
+        and "preview=" in e
+        and "64" in e
+        and "120" in e
+        and "184" in e
+        and "line1" in e
+        for e in events
+    )
+
+
+def test_emit_tool_detail_cancel_job_shows_cancellation_result():
+    events: list[str] = []
+    runtime = _make_runtime(_NoopProvider(), _RecordingRegistry(), ui_event_printer=events.append)
+
+    runtime._emit_tool_detail(
+        "cancel_job",
+        {"job_id": "job_123"},
+        '{"cancelled":true,"status":"cancelling"}',
+    )
+
+    assert any(
+        "job=" in e and "cancelled=" in e and "status=" in e and "true" in e and "cancelling" in e
+        for e in events
+    )
+
+
+def test_emit_tool_detail_job_tools_fall_back_when_json_parse_fails():
+    events: list[str] = []
+    runtime = _make_runtime(_NoopProvider(), _RecordingRegistry(), ui_event_printer=events.append)
+
+    runtime._emit_tool_detail("start_job", {}, "plain text output")
+
+    assert any("状态=ok" in e and "plain text output" in e for e in events)
+
+
+def test_emit_tool_detail_poll_job_falls_back_on_malformed_and_non_dict_json():
+    events: list[str] = []
+    runtime = _make_runtime(_NoopProvider(), _RecordingRegistry(), ui_event_printer=events.append)
+
+    runtime._emit_tool_detail("poll_job", {"job_id": "job_123"}, "{bad json")
+    runtime._emit_tool_detail("poll_job", {"job_id": "job_123"}, '["not", "dict"]')
+
+    assert any("状态=ok" in e and "{bad json" in e for e in events)
+    assert any("状态=ok" in e and '["not", "dict"]' in e for e in events)
+
+
+def test_emit_tool_detail_read_job_log_falls_back_on_malformed_and_non_dict_json():
+    events: list[str] = []
+    runtime = _make_runtime(_NoopProvider(), _RecordingRegistry(), ui_event_printer=events.append)
+
+    runtime._emit_tool_detail("read_job_log", {"job_id": "job_123"}, "{bad json")
+    runtime._emit_tool_detail("read_job_log", {"job_id": "job_123"}, '["not", "dict"]')
+
+    assert any("状态=ok" in e and "{bad json" in e for e in events)
+    assert any("状态=ok" in e and '["not", "dict"]' in e for e in events)
+
+
+def test_emit_tool_detail_cancel_job_falls_back_on_malformed_and_non_dict_json():
+    events: list[str] = []
+    runtime = _make_runtime(_NoopProvider(), _RecordingRegistry(), ui_event_printer=events.append)
+
+    runtime._emit_tool_detail("cancel_job", {"job_id": "job_123"}, "{bad json")
+    runtime._emit_tool_detail("cancel_job", {"job_id": "job_123"}, '["not", "dict"]')
+
+    assert any("状态=ok" in e and "{bad json" in e for e in events)
+    assert any("状态=ok" in e and '["not", "dict"]' in e for e in events)
+
+
+def test_emit_tool_detail_job_tools_include_error_context_on_failure_status():
+    events: list[str] = []
+    runtime = _make_runtime(_NoopProvider(), _RecordingRegistry(), ui_event_printer=events.append)
+
+    runtime._emit_tool_detail(
+        "poll_job",
+        {"job_id": "job_123"},
+        '{"status":"failed","exit_code":1,"error":"process crashed"}',
+    )
+    runtime._emit_tool_detail(
+        "read_job_log",
+        {"job_id": "job_123", "offset": 10},
+        '{"status":"error","bytes_read":0,"next_offset":10,"message":"access denied"}',
+    )
+    runtime._emit_tool_detail(
+        "cancel_job",
+        {"job_id": "job_123"},
+        '{"status":"failed","cancelled":false,"message":"already completed"}',
+    )
+
+    assert any("poll_job" not in e and "error=" in e and "process crashed" in e for e in events)
+    assert any("read" not in e and "error=" in e and "access denied" in e for e in events)
+    assert any(
+        "cancelled=false" in e and "error=" in e and "already completed" in e for e in events
+    )

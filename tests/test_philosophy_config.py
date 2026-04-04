@@ -4,6 +4,7 @@ from agent_framework._config import (
     MAX_HISTORY_RECORDS,
     MAX_MEMORY_LINES,
     SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+    AgentSettings,
     FeatureFlags,
 )
 
@@ -25,3 +26,20 @@ def test_feature_flags_defaults():
     assert flags.enable_multi_agent is False
     assert flags.enable_daemon is False
     assert flags.enable_pet_mode is False
+
+
+def test_agent_settings_subagent_flow_default_false() -> None:
+    settings = AgentSettings()
+    assert settings.enable_subagent_flow is False
+
+
+def test_agent_settings_from_env_parses_subagent_flow_truthy(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_ENABLE_SUBAGENT_FLOW", "yes")
+    settings = AgentSettings.from_env()
+    assert settings.enable_subagent_flow is True
+
+
+def test_agent_settings_from_env_parses_subagent_flow_falsy(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_ENABLE_SUBAGENT_FLOW", "off")
+    settings = AgentSettings.from_env()
+    assert settings.enable_subagent_flow is False

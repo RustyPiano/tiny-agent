@@ -26,6 +26,7 @@ from agent_framework.tools.edit_file_tool import register_edit_file_tool
 from agent_framework.tools.file_tools import register_file_tools
 from agent_framework.tools.finish_tool import register_finish_tool
 from agent_framework.tools.grep_tool import register_grep_tool
+from agent_framework.tools.job_tool import register_job_tools
 from agent_framework.tools.list_dir_tool import register_list_dir_tool
 from agent_framework.tools.skill_tool import register_skill_tool
 from agent_framework.tools.summarize_tool import register_summarize_tool
@@ -107,6 +108,7 @@ def bootstrap(settings: AgentSettings) -> None:
     register_finish_tool()
     register_list_dir_tool()
     register_grep_tool()
+    register_job_tools()
     try:
         result = load_extensions()
         for ext in result["loaded"]:
@@ -150,6 +152,17 @@ def main() -> None:
         default=None,
         help="日志级别: DEBUG | INFO | WARNING | ERROR（concise 模式默认 WARNING）",
     )
+    subagent_flow_group = parser.add_mutually_exclusive_group()
+    subagent_flow_group.add_argument(
+        "--enable-subagent-flow",
+        action="store_true",
+        help="启用 subagent flow 编排路径",
+    )
+    subagent_flow_group.add_argument(
+        "--disable-subagent-flow",
+        action="store_true",
+        help="禁用 subagent flow 编排路径",
+    )
     args = parser.parse_args()
 
     # Resolve UI mode: --ui takes priority, then --show-turns fallback, then default concise
@@ -180,6 +193,10 @@ def main() -> None:
         settings.model = args.model
     if args.base_url:
         settings.base_url = args.base_url
+    if args.enable_subagent_flow:
+        settings.enable_subagent_flow = True
+    elif args.disable_subagent_flow:
+        settings.enable_subagent_flow = False
 
     # 校验配置
     errors = settings.validate()

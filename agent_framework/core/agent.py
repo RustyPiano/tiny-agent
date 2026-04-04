@@ -105,7 +105,10 @@ def _run_with_runtime(
         settings, provider, run_ctx, session_id
     )
     provider_type = _get_provider_type(provider)
-    system = build_system_prompt(skills)
+    system = build_system_prompt(
+        skills,
+        enable_subagent_flow=settings.enable_subagent_flow,
+    )
     log_event("run_start", run_ctx, provider=provider_type, max_turns=settings.max_turns)
     history = _load_history_with_provider_check(session_id, provider_type, run_ctx)
     ctx = Context(history)
@@ -124,4 +127,6 @@ def _run_with_runtime(
         turn_printer=turn_printer,
         ui_event_printer=ui_event_printer,
     )
+    if settings.enable_subagent_flow:
+        runtime.enable_subagent_flow(tasks=["task_001"])
     return runtime.run()

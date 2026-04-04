@@ -10,6 +10,7 @@ from agent_framework._config import (
     MAX_TURNS,
     SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
 )
+from agent_framework.core.prompt_builder import build_system_prompt
 
 
 def _section_body(title: str) -> str:
@@ -45,6 +46,10 @@ def test_tool_whitelist_section_includes_complete_expected_actions() -> None:
         "write_file",
         "edit_file",
         "run_bash",
+        "start_job",
+        "poll_job",
+        "read_job_log",
+        "cancel_job",
         "grep",
         "list_dir",
         "use_skill",
@@ -75,3 +80,13 @@ def test_security_section_has_non_bypassable_guards() -> None:
     ]
     for phrase in required_phrases:
         assert phrase in section, f"missing security guard: {phrase}"
+
+
+def test_prompt_includes_subagent_flow_marker_when_enabled() -> None:
+    prompt = build_system_prompt(enable_subagent_flow=True)
+    assert "## Subagent Flow Discipline" in prompt
+
+
+def test_prompt_omits_subagent_flow_marker_when_disabled() -> None:
+    prompt = build_system_prompt(enable_subagent_flow=False)
+    assert "## Subagent Flow Discipline" not in prompt
