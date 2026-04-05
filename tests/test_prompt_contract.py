@@ -140,6 +140,13 @@ def test_context_discipline_section_uses_config_limit_constants() -> None:
     assert f"最多 {MAX_FILE_READ_LINES} 行" in section
 
 
+def test_context_discipline_section_directs_long_tasks_to_run_job() -> None:
+    section = _section_body("上下文纪律")
+    assert "`run_bash` 仅用于前台短任务" in section
+    assert "预计可能超过短任务窗口的命令必须使用 `run_job`" in section
+    assert "`run_bash` 超时后，不要通过增大 `timeout` 重试" in section
+
+
 def test_security_section_has_non_bypassable_guards() -> None:
     section = _section_body("安全规则")
     required_phrases = [

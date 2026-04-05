@@ -145,7 +145,8 @@ def _select_timeout(command: str, timeout: int | float | str | None) -> int:
     _ = command
     if timeout is not None:
         try:
-            return int(float(timeout))
+            requested = int(float(timeout))
+            return min(requested, _DEFAULT_BASH_TIMEOUT_SEC)
         except (ValueError, TypeError):
             pass
 
@@ -281,7 +282,10 @@ def run_bash(
         return _truncate_output(output)
     except subprocess.TimeoutExpired:
         _terminate_process_tree(process)
-        return f"[timeout] 命令在 {selected_timeout}s 内未完成: {command}"
+        return (
+            f"[timeout] 命令在 {selected_timeout}s 内未完成: {command}\n"
+            "该命令超出了前台短任务窗口，请改用 `run_job`。"
+        )
     except Exception as e:
         return f"[error] {e}"
 
@@ -298,16 +302,12 @@ def register_bash_tool(workspace_root: pathlib.Path | str | None = None) -> None
     register(
         name="run_bash",
         description=(
-            "在本地 shell 中执行命令并返回输出（stdout + stderr）。"
-            "适合查看目录结构、运行脚本、执行测试、安装依赖等。"
-            "不要用于不可逆的危险操作。"
+            "在本地 shell 中执行前台短命令并返回输出（stdout + stderr）。"
+            "适合快速查看目录结构、执行短检查、运行短脚本。"
+            "预计可能超过 30 秒的命令不要使用本工具，应改用 run_job。"
         ),
         parameters={
             "command": {"type": "string", "description": "要执行的 shell 命令"},
-            "timeout": {
-                "type": ["integer", "null"],
-                "description": f"可选超时秒数；不传时默认使用 {_DEFAULT_BASH_TIMEOUT_SEC} 秒短任务超时",
-            },
             "workdir": {"type": "string", "description": "工作目录路径，默认当前目录"},
         },
         required=["command"],

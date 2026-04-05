@@ -445,10 +445,38 @@ def test_bash_explicit_timeout_uses_legacy_behavior(monkeypatch):
 
     monkeypatch.setattr(bash_tool.subprocess, "Popen", _FakePopen)
 
-    result = run_bash("true", timeout=30)
+    result = run_bash("true", timeout=5)
+
+    assert observed_timeouts == [5]
+    assert "[ok] 命令执行完毕，退出码 0，无输出" in result
+
+
+def test_bash_explicit_timeout_is_clamped_to_short_task_limit(monkeypatch):
+    observed_timeouts: list[int | None] = []
+
+    class _FakePopen:
+        def __init__(self, *args, **kwargs):
+            observed_timeouts.append(None)
+            self.returncode = 0
+
+        def communicate(self, timeout=None):
+            observed_timeouts[-1] = timeout
+            return ("", "")
+
+    monkeypatch.setattr(bash_tool.subprocess, "Popen", _FakePopen)
+
+    run_bash("true", timeout=120)
 
     assert observed_timeouts == [30]
-    assert "[ok] 命令执行完毕，退出码 0，无输出" in result
+
+
+def test_bootstrap_run_bash_schema_does_not_expose_timeout() -> None:
+    _reset_tools()
+    bootstrap(settings=AgentSettings())
+
+    schema = next(s for s in registry.get_schemas() if s["name"] == "run_bash")
+
+    assert "timeout" not in schema["input_schema"]["properties"]
 
 
 def test_use_skill_returns_prompt_text(tmp_path):
