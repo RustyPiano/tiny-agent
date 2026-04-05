@@ -15,7 +15,8 @@ def assemble_messages(
             static_system_prompt.strip(),
             SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
             "## Current MEMORY\n" + (memory_text.strip() or "[none]"),
-            "## Compacted History\n" + (compacted_history.strip() or "[none]"),
+            "## Compacted History\n"
+            + ("[sent as compacted provider message]" if compacted_history.strip() else "[none]"),
             "## Current Task + Last Observation\n"
             + "Current Task:\n"
             + (current_task.strip() or "[none]")
@@ -24,3 +25,13 @@ def assemble_messages(
             + (last_observation.strip() or "[none]"),
         ]
     )
+
+
+def assemble_compacted_history_message(compacted_history: str) -> dict | None:
+    compacted = compacted_history.strip()
+    if not compacted:
+        return None
+    return {
+        "role": "assistant",
+        "content": "Earlier conversation summary:\n" + compacted,
+    }

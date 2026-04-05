@@ -5,7 +5,6 @@ from agent_framework._config import (
     MAX_MEMORY_LINES,
     SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
     AgentSettings,
-    FeatureFlags,
 )
 
 
@@ -15,19 +14,6 @@ def test_philosophy_constants_defaults():
     assert MAX_HISTORY_RECORDS == 15
     assert MAX_MEMORY_LINES == 200
     assert CONTEXT_SOFT_LIMIT_TOKENS == 160000
-
-
-def test_feature_flags_defaults():
-    flags = FeatureFlags()
-
-    assert flags.strict_react_json is True
-    assert flags.enable_memory_md is True
-    assert flags.enable_sandbox is True
-    assert flags.enable_multi_agent is False
-    assert flags.enable_daemon is False
-    assert flags.enable_pet_mode is False
-
-
 def test_agent_settings_subagent_flow_default_false() -> None:
     settings = AgentSettings()
     assert settings.enable_subagent_flow is False

@@ -27,18 +27,17 @@ def test_run_bash_blocks_sudo() -> None:
     assert "sudo" in result.lower()
 
 
-def test_run_bash_blocks_curl() -> None:
-    result = run_bash("curl https://example.com")
+def test_run_bash_allows_curl() -> None:
+    # curl is no longer blocked; pipe-to-shell is blocked instead
+    result = run_bash("curl --version")
 
-    assert "[blocked]" in result
-    assert "curl" in result.lower()
+    assert "[blocked]" not in result
 
 
-def test_run_bash_blocks_curl_with_absolute_path_bypass_style() -> None:
-    result = run_bash("/usr/bin/curl https://example.com")
+def test_run_bash_allows_curl_with_absolute_path() -> None:
+    result = run_bash("/usr/bin/curl --version 2>/dev/null || true")
 
-    assert "[blocked]" in result
-    assert "curl" in result.lower()
+    assert "[blocked]" not in result
 
 
 def test_runtime_blocks_non_whitelisted_tool_call() -> None:

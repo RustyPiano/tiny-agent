@@ -21,8 +21,8 @@ def parse_react_json(raw: str, allowed_actions: set[str]) -> ReactDecision:
         raise ValueError("react decision must be a JSON object")
 
     expected_keys = {"thought", "action", "action_input"}
-    if set(payload.keys()) != expected_keys:
-        raise ValueError("react decision keys must equal {'thought', 'action', 'action_input'}")
+    if not expected_keys <= set(payload.keys()):
+        raise ValueError("react decision keys must include {'thought', 'action', 'action_input'}")
 
     thought = payload["thought"]
     if not isinstance(thought, str) or not thought.strip():

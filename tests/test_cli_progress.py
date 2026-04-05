@@ -322,6 +322,39 @@ def test_ui_event_printer_emits_per_tool_details(tmp_path: Path):
     assert any("cmd=python run_script.py" in e and "…" in e for e in events)
 
 
+def test_ui_event_printer_parses_structured_list_dir_preview(tmp_path: Path):
+    events: list[str] = []
+    payload = (
+        '{"ok":true,"tool":"list_dir","path":"'
+        f'{tmp_path}'
+        '","offset":0,"limit":3,"returned":3,"next_offset":3,'
+        '"truncated":true,"preview":["item0","item1","item2"],'
+        '"continuation":{"tool":"list_dir","path":"'
+        f'{tmp_path}'
+        '","offset":3,"limit":3}}'
+    )
+
+    class _StructuredListDirRegistry:
+        def execute(self, name: str, inputs: dict) -> str:
+            _ = inputs
+            if name == "list_dir":
+                return payload
+            return "ok"
+
+        def get_schemas(self) -> list[dict]:
+            return [{"name": "list_dir"}]
+
+        def list_tools(self) -> list[str]:
+            return ["list_dir"]
+
+    runtime = _make_runtime(_NoopProvider(), _StructuredListDirRegistry(), ui_event_printer=events.append)
+
+    runtime._emit_tool_detail("list_dir", {"path": str(tmp_path)}, payload)
+
+    assert any("结果(3)" in e for e in events)
+    assert any("item0, item1, item2" in e for e in events)
+
+
 def test_ui_event_printer_shows_bash_status_and_preview():
     events: list[str] = []
 

@@ -1,13 +1,22 @@
 # tests/test_tools.py
+import json
 import re
 from pathlib import Path
 
 from agent_framework import _config as config
+from agent_framework._config import AgentSettings
+from agent_framework.main import bootstrap
 from agent_framework.skills import discover_skills
 from agent_framework.tools import bash_tool
+from agent_framework.tools import grep_tool, list_dir_tool, registry
 from agent_framework.tools.bash_tool import run_bash
 from agent_framework.tools.file_tools import read_file, write_file
 from agent_framework.tools.skill_tool import use_skill
+
+
+def _reset_tools() -> None:
+    registry._TOOLS.clear()
+    registry.clear_before_tool_call_hooks()
 
 
 def test_write_and_read(tmp_path):
@@ -66,6 +75,207 @@ def test_write_file_rejects_oversized_content(tmp_path):
 
 def test_read_nonexistent():
     assert "[error]" in read_file("/nonexistent/path.txt")
+
+
+def test_bootstrap_registers_file_tools_with_settings_workspace_root(monkeypatch, tmp_path):
+    _reset_tools()
+    settings_root = tmp_path / "runtime-root"
+    global_root = tmp_path / "global-root"
+    settings_root.mkdir()
+    global_root.mkdir()
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", global_root)
+
+    bootstrap(settings=AgentSettings(workspace_root=settings_root))
+
+    result = registry.execute(
+        "write_file",
+        {"path": str(settings_root / "hello.txt"), "content": "hello"},
+    )
+
+    assert "[ok]" in result
+    assert (settings_root / "hello.txt").read_text(encoding="utf-8") == "hello"
+
+
+def test_bootstrap_registers_list_dir_tool_with_settings_workspace_root(monkeypatch, tmp_path):
+    _reset_tools()
+    settings_root = tmp_path / "runtime-root"
+    global_root = tmp_path / "global-root"
+    settings_root.mkdir()
+    global_root.mkdir()
+    (settings_root / "visible.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", global_root)
+
+    bootstrap(settings=AgentSettings(workspace_root=settings_root))
+
+    result = registry.execute("list_dir", {"path": str(settings_root)})
+
+    assert "visible.txt" in result
+
+
+def test_bootstrap_registers_edit_file_tool_with_settings_workspace_root(monkeypatch, tmp_path):
+    _reset_tools()
+    settings_root = tmp_path / "runtime-root"
+    global_root = tmp_path / "global-root"
+    settings_root.mkdir()
+    global_root.mkdir()
+    target = settings_root / "editable.txt"
+    target.write_text("old value", encoding="utf-8")
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", global_root)
+
+    bootstrap(settings=AgentSettings(workspace_root=settings_root))
+
+    result = registry.execute(
+        "edit_file",
+        {
+            "path": str(target),
+            "old_str": "old",
+            "new_str": "new",
+        },
+    )
+
+    assert "[ok]" in result
+    assert target.read_text(encoding="utf-8") == "new value"
+
+
+def test_bootstrap_registers_grep_tool_with_settings_workspace_root(monkeypatch, tmp_path):
+    _reset_tools()
+    settings_root = tmp_path / "runtime-root"
+    global_root = tmp_path / "global-root"
+    settings_root.mkdir()
+    global_root.mkdir()
+    target = settings_root / "hello.txt"
+    target.write_text("alpha beta\n", encoding="utf-8")
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", global_root)
+
+    bootstrap(settings=AgentSettings(workspace_root=settings_root))
+
+    result = registry.execute("grep", {"pattern": "alpha", "path": str(target)})
+
+    assert "hello.txt" in result
+
+
+def test_bootstrap_registers_run_bash_with_settings_workspace_root(monkeypatch, tmp_path):
+    _reset_tools()
+    settings_root = tmp_path / "runtime-root"
+    global_root = tmp_path / "global-root"
+    settings_root.mkdir()
+    global_root.mkdir()
+    observed: dict = {}
+    monkeypatch.setattr(config, "WORKSPACE_ROOT", global_root)
+
+    def fake_run(*args, **kwargs):
+        observed["cwd"] = kwargs.get("cwd")
+
+        class Result:
+            stdout = "ok\n"
+            stderr = ""
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
+    bootstrap(settings=AgentSettings(workspace_root=settings_root))
+
+    result = registry.execute("run_bash", {"command": "pwd"})
+
+    assert result == "ok\n"
+    assert observed["cwd"] == str(settings_root)
+
+
+def test_list_dir_truncates_with_continuation_metadata(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(list_dir_tool, "_MAX_LIST_DIR_ENTRIES", 3, raising=False)
+
+    root = tmp_path / "demo"
+    root.mkdir()
+    for name in ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"]:
+        (root / name).write_text(name, encoding="utf-8")
+
+    result = list_dir_tool.list_dir(str(root))
+    data = json.loads(result)
+
+    assert data["ok"] is True
+    assert data["truncated"] is True
+    assert data["next_offset"] == 3
+    assert data["preview"] == ["a.txt", "b.txt", "c.txt"]
+    assert data["continuation"]["tool"] == "list_dir"
+    assert data["continuation"]["offset"] == 3
+
+
+def test_list_dir_supports_follow_up_pagination(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(list_dir_tool, "_MAX_LIST_DIR_ENTRIES", 3, raising=False)
+
+    root = tmp_path / "demo"
+    root.mkdir()
+    for name in ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"]:
+        (root / name).write_text(name, encoding="utf-8")
+
+    first = json.loads(list_dir_tool.list_dir(str(root), offset=0, limit=3))
+    second = json.loads(
+        list_dir_tool.list_dir(str(root), offset=first["next_offset"], limit=3)
+    )
+
+    assert first["truncated"] is True
+    assert first["preview"] == ["a.txt", "b.txt", "c.txt"]
+    assert second["preview"] == ["d.txt", "e.txt"]
+    assert second["truncated"] is False
+    assert "continuation" not in second
+
+
+def test_grep_truncates_with_continuation_metadata(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(grep_tool, "_MAX_GREP_MATCHES", 2, raising=False)
+
+    root = tmp_path / "demo"
+    root.mkdir()
+    for idx in range(4):
+        (root / f"file-{idx}.txt").write_text(f"alpha {idx}\n", encoding="utf-8")
+
+    result = grep_tool.grep("alpha", str(root))
+    data = json.loads(result)
+
+    assert data["ok"] is True
+    assert data["truncated"] is True
+    assert data["next_offset"] == 2
+    assert len(data["preview"]) == 2
+    assert data["continuation"]["tool"] == "grep"
+    assert data["continuation"]["offset"] == 2
+
+
+def test_grep_supports_follow_up_pagination(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(grep_tool, "_MAX_GREP_MATCHES", 2, raising=False)
+
+    root = tmp_path / "demo"
+    root.mkdir()
+    for idx in range(4):
+        (root / f"file-{idx}.txt").write_text(f"alpha {idx}\n", encoding="utf-8")
+
+    first = json.loads(grep_tool.grep("alpha", str(root), offset=0, limit=2))
+    second = json.loads(
+        grep_tool.grep("alpha", str(root), offset=first["next_offset"], limit=2)
+    )
+
+    assert first["truncated"] is True
+    assert len(first["preview"]) == 2
+    assert len(second["preview"]) == 2
+    assert second["truncated"] is False
+
+
+def test_grep_truncates_wide_match_text(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(grep_tool, "_MAX_GREP_MATCHES", 5, raising=False)
+    monkeypatch.setattr(grep_tool, "_MAX_GREP_LINE_CHARS", 20, raising=False)
+
+    root = tmp_path / "demo"
+    root.mkdir()
+    (root / "wide.txt").write_text("alpha " + ("x" * 200) + "\n", encoding="utf-8")
+
+    result = grep_tool.grep("alpha", str(root))
+    data = json.loads(result)
+
+    assert data["ok"] is True
+    assert data["truncated"] is False
+    assert data["preview_truncated"] is True
+    assert len(data["preview"]) == 1
+    assert "...[截断" in data["preview"][0]
+    assert "continuation" not in data
 
 
 def test_bash_echo():
@@ -161,7 +371,7 @@ def test_bash_adaptive_timeout_for_long_commands(monkeypatch):
 
     assert observed_timeouts[0] == 300
     assert observed_timeouts[1] == 180
-    assert observed_timeouts[2] == 30
+    assert observed_timeouts[2] == 60
 
 
 def test_bash_truncation_includes_saved_full_output_path(monkeypatch):

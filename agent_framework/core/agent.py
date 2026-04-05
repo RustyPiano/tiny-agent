@@ -49,10 +49,13 @@ def _load_history_with_provider_check(
     session_id: str | None,
     provider_type: str,
     run_ctx: RunContext,
+    settings: AgentSettings | None = None,
+    store=None,
 ) -> list[dict]:
     if not session_id:
         return []
-    history, stored_provider = session_store.load(session_id)
+    active_store = store or _build_session_store(settings)
+    history, stored_provider = active_store.load(session_id)
     normalized_provider = (
         stored_provider.strip().lower() if isinstance(stored_provider, str) else ""
     )
@@ -63,6 +66,13 @@ def _load_history_with_provider_check(
         log_event("provider_mismatch", run_ctx, stored=stored_provider, current=provider_type)
         return []
     return history
+
+
+def _build_session_store(settings: AgentSettings | None):
+    sessions_dir = getattr(settings, "sessions_dir", None) if settings is not None else None
+    if sessions_dir is None:
+        return session_store
+    return session_store.create_session_store(sessions_dir)
 
 
 def run(
@@ -105,12 +115,21 @@ def _run_with_runtime(
         settings, provider, run_ctx, session_id
     )
     provider_type = _get_provider_type(provider)
+    tool_schemas = tool_registry.get_schemas()
     system = build_system_prompt(
         skills,
         enable_subagent_flow=settings.enable_subagent_flow,
+        tool_schemas=tool_schemas,
     )
     log_event("run_start", run_ctx, provider=provider_type, max_turns=settings.max_turns)
-    history = _load_history_with_provider_check(session_id, provider_type, run_ctx)
+    active_session_store = _build_session_store(settings)
+    history = _load_history_with_provider_check(
+        session_id,
+        provider_type,
+        run_ctx,
+        settings=settings,
+        store=active_session_store,
+    )
     ctx = Context(history)
     ctx.add_user(user_input)
     runtime = AgentRuntime(
@@ -118,7 +137,7 @@ def _run_with_runtime(
         settings=settings,
         ctx=ctx,
         tool_registry=tool_registry,
-        session_store=session_store,
+        session_store=active_session_store,
         system=system,
         run_ctx=run_ctx,
         session_id=session_id,

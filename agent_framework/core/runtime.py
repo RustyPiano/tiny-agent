@@ -15,11 +15,18 @@ import openai
 
 from agent_framework import _config as config
 from agent_framework.core.context import Context
-from agent_framework.core.context_budget import estimate_tokens, should_compact
-from agent_framework.core.history_compactor import compact_history
+from agent_framework.core.context_budget import (
+    estimate_payload_tokens,
+    serialize_for_budget,
+    should_compact,
+)
+from agent_framework.core.history_compactor import compact_message_history
 from agent_framework.core.logging import RunContext, log_event
 from agent_framework.core.memory_store import MemoryStore
-from agent_framework.core.message_assembler import assemble_messages
+from agent_framework.core.message_assembler import (
+    assemble_compacted_history_message,
+    assemble_messages,
+)
 from agent_framework.core.policies import DefaultRuntimePolicy, RuntimePolicy, Step
 from agent_framework.core.react_protocol import ReactDecision, parse_react_json_with_error
 from agent_framework.core.sandbox import sandbox_cwd
@@ -55,6 +62,8 @@ END_TURN_REACT_PARSE_RETRY_EXHAUSTED_PAYLOAD = (
 
 
 class AgentRuntime:
+    _DYNAMIC_CONTEXT_PREVIEW_CHARS = 200
+
     def __init__(
         self,
         provider: BaseLLMProvider,
@@ -258,6 +267,21 @@ class AgentRuntime:
                     f"    ↳ path={path} 状态={status} 输出={self._preview_first_line(output_text)}"
                 )
                 return
+            payload = self._parse_output_json_dict(output_text)
+            if isinstance(payload, dict) and payload.get("tool") == "list_dir":
+                entries = payload.get("preview", [])
+                if isinstance(entries, list):
+                    shown = [str(item).strip() for item in entries if str(item).strip()]
+                    next_offset = payload.get("next_offset")
+                    truncated = bool(payload.get("truncated"))
+                    preview = ", ".join(shown[:8])
+                    suffix = ""
+                    if truncated and isinstance(next_offset, int):
+                        suffix = f", ... (继续 offset={next_offset})"
+                    self.ui_event_printer(
+                        f"    ↳ path={path} 结果({len(shown)}): {preview}{suffix}"
+                    )
+                    return
             entries = [line.strip() for line in output_text.splitlines() if line.strip()]
             total = len(entries)
             shown = entries[:8]
@@ -380,33 +404,17 @@ class AgentRuntime:
 
     def call_llm(self) -> LLMResponse:
         messages = self.ctx.get()
-        current_task = self._latest_user_text(messages)
-        last_observation = self._latest_non_user_text(messages)
-        estimated_tokens = self._estimate_context_tokens(messages)
-        memory_text = self._load_memory_text()
-        compacted_history = ""
-        soft_limit = getattr(
-            self.settings,
-            "context_soft_limit_tokens",
-            config.CONTEXT_SOFT_LIMIT_TOKENS,
-        )
-        if should_compact(estimated_tokens, soft_limit):
-            compacted_history = self._compact_history(messages)
-        dynamic_system = assemble_messages(
-            static_system_prompt=self.system,
-            memory_text=memory_text,
-            compacted_history=compacted_history,
-            last_observation=last_observation,
-            current_task=current_task,
+        provider_messages, dynamic_system, tools, _estimated_tokens = self._build_provider_payload(
+            messages
         )
 
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
                 return self.provider.chat(
-                    messages=messages,
+                    messages=provider_messages,
                     system=dynamic_system,
-                    tools=self.tool_registry.get_schemas(),
+                    tools=tools,
                     max_tokens=self.settings.max_tokens,
                 )
             except (
@@ -442,24 +450,74 @@ class AgentRuntime:
                             ),
                         },
                     )
-        # Unreachable: loop always returns on last attempt
-        raise RuntimeError("call_llm loop exited without returning")
 
     def _estimate_context_tokens(self, messages: list[dict]) -> int:
-        prompt_text = "\n".join(self._message_text_for_budget(message) for message in messages)
-        return estimate_tokens(f"{self.system}\n{prompt_text}")
+        return self._build_provider_payload(messages)[3]
+
+    def _tool_schemas(self) -> list[dict]:
+        get_schemas = getattr(self.tool_registry, "get_schemas", None)
+        if not callable(get_schemas):
+            return []
+        schemas = get_schemas() or []
+        return [schema for schema in schemas if isinstance(schema, dict)]
+
+    def _build_provider_payload(
+        self,
+        messages: list[dict],
+    ) -> tuple[list[dict], str, list[dict], int]:
+        tools = self._tool_schemas()
+        memory_text = self._load_memory_text()
+        current_task = self._summarize_dynamic_context_text(self._latest_user_text(messages))
+        last_observation = self._summarize_dynamic_context_text(
+            self._latest_non_user_text(messages)
+        )
+        raw_system = assemble_messages(
+            static_system_prompt=self.system,
+            memory_text=memory_text,
+            compacted_history="",
+            last_observation=last_observation,
+            current_task=current_task,
+        )
+        raw_tokens = estimate_payload_tokens(
+            raw_system,
+            messages,
+            tools,
+            provider_type=self.provider_type,
+        )
+        soft_limit = getattr(
+            self.settings,
+            "context_soft_limit_tokens",
+            config.CONTEXT_SOFT_LIMIT_TOKENS,
+        )
+        if not should_compact(raw_tokens, soft_limit):
+            return list(messages), raw_system, tools, raw_tokens
+
+        compacted_history, compacted_messages = self._build_compacted_payload_messages(messages)
+        compacted_system = assemble_messages(
+            static_system_prompt=self.system,
+            memory_text=memory_text,
+            compacted_history=compacted_history,
+            last_observation=last_observation,
+            current_task=current_task,
+        )
+        compacted_tokens = estimate_payload_tokens(
+            compacted_system,
+            compacted_messages,
+            tools,
+            provider_type=self.provider_type,
+        )
+        if compacted_tokens > raw_tokens:
+            return list(messages), raw_system, tools, raw_tokens
+        return compacted_messages, compacted_system, tools, compacted_tokens
 
     def _message_text_for_budget(self, message: dict) -> str:
-        try:
-            return json.dumps(message, ensure_ascii=False, sort_keys=True)
-        except TypeError:
-            content = message.get("content", "") if isinstance(message, dict) else message
-            if isinstance(content, str):
-                return content
-            try:
-                return json.dumps(content, ensure_ascii=False, sort_keys=True)
-            except TypeError:
-                return self._message_text_for_prompt(message)
+        payload = serialize_for_budget(message)
+        if payload:
+            return payload
+        content = message.get("content", "") if isinstance(message, dict) else message
+        if isinstance(content, str):
+            return content
+        return self._message_text_for_prompt(message)
 
     def _latest_user_text(self, messages: list[dict]) -> str:
         for message in reversed(messages):
@@ -476,6 +534,17 @@ class AgentRuntime:
             if fallback_text.strip():
                 return fallback_text
         return ""
+
+    def _summarize_dynamic_context_text(self, text: str) -> str:
+        compact = " ".join(str(text).split())
+        if not compact:
+            return ""
+        if len(compact) <= self._DYNAMIC_CONTEXT_PREVIEW_CHARS:
+            return compact
+        return (
+            compact[: self._DYNAMIC_CONTEXT_PREVIEW_CHARS]
+            + f"… [truncated {len(compact)} chars]"
+        )
 
     def _is_synthetic_user_tool_result_message(self, message: dict) -> bool:
         if message.get("role") != "user":
@@ -555,28 +624,105 @@ class AgentRuntime:
         except TypeError:
             return f"[{type(content).__name__} content]"
 
+    def _build_compacted_payload_messages(self, messages: list[dict]) -> tuple[str, list[dict]]:
+        if len(messages) <= 1:
+            return "", list(messages)
+
+        history_messages = messages[:-1]
+        compacted_history, recent_window = compact_message_history(
+            history=history_messages,
+            recent_window_size=config.MAX_COMPACT_HISTORY_MESSAGES,
+            summarize_fn=self._summarize_history_messages,
+            should_keep_with_next=self._messages_must_stay_together,
+        )
+        if not compacted_history.strip():
+            return "", list(messages)
+
+        compacted_message = assemble_compacted_history_message(compacted_history)
+        if compacted_message is None:
+            return "", list(messages)
+        return compacted_history, [compacted_message, *recent_window, messages[-1]]
+
     def _compact_history(self, messages: list[dict]) -> str:
+        compacted_history, _ = self._build_compacted_payload_messages(messages)
+        return compacted_history
+
+    def _summarize_history_messages(self, messages: list[dict]) -> str:
         lines: list[str] = []
-        for message in messages[-config.MAX_COMPACT_HISTORY_MESSAGES :]:
+        for message in messages:
             role = message.get("role", "unknown")
             text = self._message_text_for_prompt(message)
             lines.append(f"{role}: {text}")
-        compacted = compact_history(
-            history=lines,
-            max_records=11,
-            summarize_fn=lambda records: "\n".join(records),
-        )
-        return "\n".join(compacted)
+        return self._summarize_history_records(lines)
+
+    def _messages_must_stay_together(self, left: dict, right: dict) -> bool:
+        if left.get("role") == "tool" and right.get("role") == "tool":
+            return True
+        left_tool_ids = self._assistant_tool_call_ids(left)
+        if not left_tool_ids:
+            return False
+        right_result_ids = self._tool_result_ids(right)
+        return any(tool_id in right_result_ids for tool_id in left_tool_ids)
+
+    def _assistant_tool_call_ids(self, message: dict) -> set[str]:
+        if message.get("role") != "assistant":
+            return set()
+
+        tool_ids: set[str] = set()
+        content = message.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                tool_id = block.get("id")
+                if isinstance(tool_id, str) and tool_id:
+                    tool_ids.add(tool_id)
+
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, dict):
+                    continue
+                tool_id = tool_call.get("id")
+                if isinstance(tool_id, str) and tool_id:
+                    tool_ids.add(tool_id)
+        return tool_ids
+
+    def _tool_result_ids(self, message: dict) -> set[str]:
+        result_ids: set[str] = set()
+        if message.get("role") == "tool":
+            tool_call_id = message.get("tool_call_id")
+            if isinstance(tool_call_id, str) and tool_call_id:
+                result_ids.add(tool_call_id)
+
+        content = message.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                tool_use_id = block.get("tool_use_id")
+                if isinstance(tool_use_id, str) and tool_use_id:
+                    result_ids.add(tool_use_id)
+        return result_ids
+
+    def _summarize_history_records(self, records: list[str]) -> str:
+        if not records:
+            return ""
+        preview_lines = [f"- {self._truncate(record, 120)}" for record in records[:5]]
+        remaining = len(records) - len(preview_lines)
+        if remaining > 0:
+            preview_lines.append(f"- ... ({remaining} more earlier messages)")
+        return "\n".join(preview_lines)
 
     def _load_memory_text(self) -> str:
-        candidates: list[Path] = []
         settings_root = getattr(self.settings, "workspace_root", None)
         if isinstance(settings_root, Path):
-            settings_candidate = settings_root / "MEMORY.md"
-            candidates.append(settings_candidate)
-        global_candidate = config.WORKSPACE_ROOT / "MEMORY.md"
-        if global_candidate not in candidates:
-            candidates.append(global_candidate)
+            try:
+                return MemoryStore(path=settings_root / "MEMORY.md").load_text()
+            except Exception:
+                return ""
+
+        candidates: list[Path] = [Path(config.WORKSPACE_ROOT) / "MEMORY.md"]
 
         for candidate in candidates:
             try:
@@ -724,7 +870,7 @@ class AgentRuntime:
             self._start_heartbeat(tc.name, tool_start)
             try:
                 if tc.name == "run_bash":
-                    with sandbox_cwd():
+                    with sandbox_cwd(getattr(self.settings, "workspace_root", None)):
                         output = self.tool_registry.execute(tc.name, execute_inputs)
                 else:
                     output = self.tool_registry.execute(tc.name, execute_inputs)

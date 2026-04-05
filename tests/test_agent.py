@@ -213,10 +213,10 @@ def test_max_turns_warning():
                 stop_reason="tool_use",
                 assistant_message={"role": "assistant", "content": []},
             )
-            for i in range(25)  # 超过 MAX_TURNS=20
+            for i in range(10)  # 超过 max_turns=5
         ]
     )
-    result = run("无限循环测试", provider=provider)
+    result = run("无限循环测试", provider=provider, settings=AgentSettings(max_turns=5))
     assert "[warn]" in result
     assert "最大轮次" in result
 
@@ -548,9 +548,14 @@ def test_run_passes_subagent_flow_flag_to_prompt_builder(monkeypatch):
     )
     captured: dict = {}
 
-    def fake_build_system_prompt(skill_names=None, enable_subagent_flow=False):
+    def fake_build_system_prompt(
+        skill_names=None,
+        enable_subagent_flow=False,
+        tool_schemas=None,
+    ):
         captured["skill_names"] = skill_names
         captured["enable_subagent_flow"] = enable_subagent_flow
+        captured["tool_schemas"] = tool_schemas
         return "test-system"
 
     monkeypatch.setattr("agent_framework.core.agent.build_system_prompt", fake_build_system_prompt)

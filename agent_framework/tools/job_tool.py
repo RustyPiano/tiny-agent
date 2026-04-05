@@ -28,6 +28,7 @@ class _JobRecord:
 _MAX_JOB_RECORDS = 256
 _TERMINAL_JOB_TTL_SEC = 3600.0
 _MAX_RUNNING_JOBS = 16
+_MAX_JOB_LOG_BYTES = 4000
 
 
 _JOBS: dict[str, _JobRecord] = {}
@@ -49,18 +50,27 @@ def _get_job(job_id: str) -> _JobRecord | None:
         return _JOBS.get(job_id)
 
 
-def _resolve_workdir(workdir: str) -> tuple[str | None, str | None]:
+def _resolve_workspace_root(workspace_root: pathlib.Path | str | None = None) -> pathlib.Path:
+    root_value = config.WORKSPACE_ROOT if workspace_root is None else workspace_root
+    return pathlib.Path(root_value).resolve()
+
+
+def _resolve_workdir(
+    workdir: str | None, workspace_root: pathlib.Path | str | None = None
+) -> tuple[str | None, str | None]:
+    root = _resolve_workspace_root(workspace_root)
+    if not root.exists() or not root.is_dir():
+        return None, f"workspace root must be an existing directory: {root}"
+
     try:
-        resolved = pathlib.Path(workdir).resolve()
+        resolved = root if workdir is None else pathlib.Path(workdir).resolve()
     except Exception as e:
         return None, f"invalid workdir: {e}"
 
     try:
-        resolved.relative_to(config.WORKSPACE_ROOT)
+        resolved.relative_to(root)
     except ValueError:
-        return None, (
-            f"workdir is outside workspace root: {resolved}; workspace_root={config.WORKSPACE_ROOT}"
-        )
+        return None, f"workdir is outside workspace root: {resolved}; workspace_root={root}"
 
     if not resolved.exists() or not resolved.is_dir():
         return None, f"workdir must be an existing directory: {resolved}"
@@ -104,17 +114,27 @@ def _cleanup_jobs_locked() -> None:
             pass
 
 
+def _finalize_completed_jobs_locked() -> None:
+    """Mark completed processes with finished_at timestamp."""
+    for record in _JOBS.values():
+        if record.finished_at is None and record.process.poll() is not None:
+            record.finished_at = time.time()
+
+
 def _running_jobs_count_locked() -> int:
     running = 0
     for record in _JOBS.values():
         if record.process.poll() is None:
             running += 1
-        elif record.finished_at is None:
-            record.finished_at = time.time()
     return running
 
 
-def start_job(command: str, workdir: str | None = None) -> str:
+def start_job(
+    command: str,
+    workdir: str | None = None,
+    *,
+    workspace_root: pathlib.Path | str | None = None,
+) -> str:
     if not isinstance(command, str) or not command.strip():
         return _err("invalid_argument", "command must be a non-empty string")
     if workdir is not None and not isinstance(workdir, str):
@@ -128,14 +148,13 @@ def start_job(command: str, workdir: str | None = None) -> str:
             "invalid_argument", "background/detached operator '&' is not allowed in start_job"
         )
 
-    resolved_workdir = None
-    if workdir is not None:
-        resolved_workdir, err = _resolve_workdir(workdir)
-        if err is not None:
-            return _err("invalid_argument", err)
+    resolved_workdir, err = _resolve_workdir(workdir, workspace_root=workspace_root)
+    if err is not None:
+        return _err("invalid_argument", err)
 
     with _LOCK:
         _cleanup_jobs_locked()
+        _finalize_completed_jobs_locked()
         if _running_jobs_count_locked() >= _MAX_RUNNING_JOBS:
             return _err(
                 "too_many_running_jobs",
@@ -220,6 +239,8 @@ def read_job_log(job_id: str, offset: int = 0, limit: int = 4000) -> str:
     if not isinstance(limit, int) or limit < 0:
         return _err("invalid_argument", "limit must be an integer >= 0")
 
+    effective_limit = min(limit, _MAX_JOB_LOG_BYTES)
+
     with _LOCK:
         _cleanup_jobs_locked()
         record = _JOBS.get(job_id)
@@ -230,24 +251,39 @@ def read_job_log(job_id: str, offset: int = 0, limit: int = 4000) -> str:
     try:
         with open(log_path, "rb") as fp:
             fp.seek(offset)
-            chunk = fp.read(limit)
+            chunk = fp.read(effective_limit)
             next_offset = offset + len(chunk)
             file_size = fp.seek(0, os.SEEK_END)
     except Exception as e:
         return _err("io_error", f"failed to read log: {e}")
 
+    content = chunk.decode("utf-8", errors="replace")
+    truncated = effective_limit > 0 and next_offset < file_size
     return _ok(
         {
             "job_id": record.job_id,
             "offset": offset,
+            "limit": effective_limit,
             "next_offset": next_offset,
             "bytes_read": len(chunk),
             "eof": next_offset >= file_size,
-            "content": chunk.decode("utf-8", errors="replace"),
-            "preview": chunk.decode("utf-8", errors="replace")[:200],
+            "truncated": truncated,
+            "content": content,
+            "preview": content[:200],
+            **(
+                {
+                    "continuation": {
+                        "tool": "read_job_log",
+                        "job_id": job_id,
+                        "offset": next_offset,
+                        "limit": effective_limit,
+                    }
+                }
+                if truncated
+                else {}
+            ),
         }
     )
-
 
 def cancel_job(job_id: str, force: bool = False) -> str:
     if not isinstance(job_id, str) or not job_id:
@@ -306,7 +342,10 @@ def cancel_job(job_id: str, force: bool = False) -> str:
     )
 
 
-def register_job_tools() -> None:
+def register_job_tools(workspace_root: pathlib.Path | str | None = None) -> None:
+    def _start_handler(command: str, workdir: str | None = None) -> str:
+        return start_job(command, workdir=workdir, workspace_root=workspace_root)
+
     register(
         name="start_job",
         description="Start a managed background shell job and return its job metadata.",
@@ -318,7 +357,7 @@ def register_job_tools() -> None:
             },
         },
         required=["command"],
-        handler=start_job,
+        handler=_start_handler,
     )
     register(
         name="poll_job",

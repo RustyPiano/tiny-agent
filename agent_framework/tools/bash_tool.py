@@ -1,5 +1,6 @@
 # tools/bash_tool.py
 import os
+import pathlib
 import re
 import shlex
 import shutil
@@ -7,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 
+from agent_framework import _config as config
 from agent_framework._config import OUTPUT_TRUNCATE
 from agent_framework.tools.registry import register
 
@@ -22,9 +24,16 @@ _BLOCKED_PATTERNS = [
     # 磁盘分区
     "fdisk",
     "parted",
+    # 下载内容直接管道到 shell（常见供应链攻击手法）
+    "| sh",
+    "| bash",
+    "| zsh",
+    "|sh",
+    "|bash",
+    "|zsh",
 ]
 
-_BLOCKED_TOKENS = ["sudo", "curl", "wget"]
+_BLOCKED_TOKENS = ["sudo"]
 
 _BLOCKED_TOKEN_PATTERNS = [
     (token, re.compile(rf"(^|[;&|\s]){token}(\s|$)", re.IGNORECASE)) for token in _BLOCKED_TOKENS
@@ -130,9 +139,12 @@ def _is_detached_command(command: str) -> bool:
     return False
 
 
-def _select_timeout(command: str, timeout: int | None) -> int:
+def _select_timeout(command: str, timeout: int | float | str | None) -> int:
     if timeout is not None:
-        return timeout
+        try:
+            return int(float(timeout))
+        except (ValueError, TypeError):
+            pass
 
     cmd = command.strip().lower()
 
@@ -156,7 +168,7 @@ def _select_timeout(command: str, timeout: int | None) -> int:
         if re.search(pattern, cmd):
             return 180
 
-    return 30
+    return 60
 
 
 def _check_timeout_binary(command: str) -> str | None:
@@ -174,6 +186,28 @@ def _check_timeout_binary(command: str) -> str | None:
             "macOS 可先执行 `brew install coreutils`，然后改用 `gtimeout`。"
         )
     return "[error] 未找到 `timeout` 命令。请先安装 coreutils 或使用系统可用的超时工具。"
+
+
+def _resolve_workspace_root(workspace_root: pathlib.Path | str | None = None) -> pathlib.Path:
+    root_value = config.WORKSPACE_ROOT if workspace_root is None else workspace_root
+    return pathlib.Path(root_value).resolve()
+
+
+def _resolve_workdir(
+    workdir: str | None, workspace_root: pathlib.Path | str | None = None
+) -> tuple[str | None, str | None]:
+    root = _resolve_workspace_root(workspace_root)
+    if not root.exists() or not root.is_dir():
+        return None, f"工作空间根目录不存在或不是目录: {root}"
+
+    target = root if workdir is None else pathlib.Path(workdir).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        return None, f"工作目录超出工作空间范围: {target}\n工作空间根目录: {root}"
+    if not target.exists() or not target.is_dir():
+        return None, f"工作目录不存在或不是目录: {target}"
+    return str(target), None
 
 
 def _truncate_output(output: str) -> str:
@@ -194,7 +228,13 @@ def _truncate_output(output: str) -> str:
         return output[:OUTPUT_TRUNCATE] + f"\n...[输出已截断，共 {len(output)} 字符]"
 
 
-def run_bash(command: str, timeout: int | None = None, workdir: str | None = None) -> str:
+def run_bash(
+    command: str,
+    timeout: int | None = None,
+    workdir: str | None = None,
+    *,
+    workspace_root: pathlib.Path | str | None = None,
+) -> str:
     block_reason = _is_blocked(command)
     if block_reason:
         return f"[blocked] 命令被拒绝: {block_reason}\n原始命令: {command}"
@@ -207,6 +247,10 @@ def run_bash(command: str, timeout: int | None = None, workdir: str | None = Non
             "[blocked] 不支持以 '&' 启动后台分离命令。"
             "请使用任务工具管理长任务：`start_job`、`poll_job`、`read_job_log`、`cancel_job`（如当前环境已启用）。"
         )
+
+    resolved_workdir, workdir_error = _resolve_workdir(workdir, workspace_root=workspace_root)
+    if workdir_error is not None:
+        return f"[error] {workdir_error}"
 
     timeout_error = _check_timeout_binary(command)
     if timeout_error:
@@ -221,7 +265,7 @@ def run_bash(command: str, timeout: int | None = None, workdir: str | None = Non
             capture_output=True,
             text=True,
             timeout=selected_timeout,
-            cwd=workdir,
+            cwd=resolved_workdir,
         )
         output = result.stdout
         if result.stderr:
@@ -235,7 +279,15 @@ def run_bash(command: str, timeout: int | None = None, workdir: str | None = Non
         return f"[error] {e}"
 
 
-def register_bash_tool() -> None:
+def register_bash_tool(workspace_root: pathlib.Path | str | None = None) -> None:
+    def _handler(command: str, timeout: int | None = None, workdir: str | None = None) -> str:
+        return run_bash(
+            command,
+            timeout=timeout,
+            workdir=workdir,
+            workspace_root=workspace_root,
+        )
+
     register(
         name="run_bash",
         description=(
@@ -252,5 +304,5 @@ def register_bash_tool() -> None:
             "workdir": {"type": "string", "description": "工作目录路径，默认当前目录"},
         },
         required=["command"],
-        handler=run_bash,
+        handler=_handler,
     )

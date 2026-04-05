@@ -5,7 +5,9 @@ from agent_framework import _config as config
 from agent_framework.tools.registry import register
 
 
-def _validate_path(path: str) -> tuple[pathlib.Path, str | None]:
+def _validate_path(
+    path: str, workspace_root: pathlib.Path | None = None
+) -> tuple[pathlib.Path, str | None]:
     """验证路径是否在工作空间内，返回 (resolved_path, error_message)"""
     p = pathlib.Path(path)
     try:
@@ -13,8 +15,11 @@ def _validate_path(path: str) -> tuple[pathlib.Path, str | None]:
     except Exception as e:
         return p, f"路径解析失败: {e}"
 
-    # 运行时动态获取 WORKSPACE_ROOT（支持测试 monkeypatch）
-    workspace_root = config.WORKSPACE_ROOT
+    workspace_root = (
+        workspace_root.resolve()
+        if isinstance(workspace_root, pathlib.Path)
+        else pathlib.Path(config.WORKSPACE_ROOT).resolve()
+    )
 
     # 检查是否在工作空间内
     try:
@@ -25,8 +30,14 @@ def _validate_path(path: str) -> tuple[pathlib.Path, str | None]:
     return resolved, None
 
 
-def read_file(path: str, start_line: int | None = None, end_line: int | None = None) -> str:
-    p, err = _validate_path(path)
+def read_file(
+    path: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+    *,
+    workspace_root: pathlib.Path | None = None,
+) -> str:
+    p, err = _validate_path(path, workspace_root=workspace_root)
     if err:
         return f"[error] {err}"
 
@@ -56,13 +67,25 @@ def read_file(path: str, start_line: int | None = None, end_line: int | None = N
 
     lines_with_endings = content.splitlines(keepends=True)
     if len(lines_with_endings) > config.MAX_FILE_READ_LINES:
-        return "".join(lines_with_endings[: config.MAX_FILE_READ_LINES])
+        truncated = "".join(lines_with_endings[: config.MAX_FILE_READ_LINES])
+        total = len(lines_with_endings)
+        return (
+            truncated
+            + f"\n[truncated] 已显示前 {config.MAX_FILE_READ_LINES} 行，"
+            f"共 {total} 行。使用 start_line/end_line 查看更多内容。"
+        )
 
     return content
 
 
-def write_file(path: str, content: str, mode: str = "overwrite") -> str:
-    p, err = _validate_path(path)
+def write_file(
+    path: str,
+    content: str,
+    mode: str = "overwrite",
+    *,
+    workspace_root: pathlib.Path | None = None,
+) -> str:
+    p, err = _validate_path(path, workspace_root=workspace_root)
     if err:
         return f"[error] {err}"
 
@@ -84,7 +107,18 @@ def write_file(path: str, content: str, mode: str = "overwrite") -> str:
         return f"[ok] 已写入 {len(content)} 字符到 {path}"
 
 
-def register_file_tools() -> None:
+def register_file_tools(workspace_root: pathlib.Path | None = None) -> None:
+    def _read_handler(path: str, start_line: int | None = None, end_line: int | None = None) -> str:
+        return read_file(
+            path,
+            start_line=start_line,
+            end_line=end_line,
+            workspace_root=workspace_root,
+        )
+
+    def _write_handler(path: str, content: str, mode: str = "overwrite") -> str:
+        return write_file(path, content, mode=mode, workspace_root=workspace_root)
+
     register(
         name="read_file",
         description=(
@@ -96,7 +130,7 @@ def register_file_tools() -> None:
             "end_line": {"type": "integer", "description": "结束行号（含），可省略"},
         },
         required=["path"],
-        handler=read_file,
+        handler=_read_handler,
     )
     register(
         name="write_file",
@@ -110,5 +144,5 @@ def register_file_tools() -> None:
             "mode": {"type": "string", "description": "'overwrite'（默认）或 'append'"},
         },
         required=["path", "content"],
-        handler=write_file,
+        handler=_write_handler,
     )

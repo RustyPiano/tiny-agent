@@ -4,7 +4,11 @@ import pathlib
 
 import pytest
 
-from agent_framework import _config as config
+from agent_framework import _config as config, main
+from agent_framework._config import AgentSettings
+from agent_framework.core.agent import _load_history_with_provider_check
+from agent_framework.core.logging import RunContext
+from agent_framework.llm.base import BaseLLMProvider, LLMResponse
 from agent_framework.sessions.migrations import migrate
 from agent_framework.sessions.store import SCHEMA_VERSION, delete, list_sessions, load, save
 
@@ -12,6 +16,25 @@ from agent_framework.sessions.store import SCHEMA_VERSION, delete, list_sessions
 @pytest.fixture(autouse=True)
 def _patch_sessions_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "SESSIONS_DIR", str(tmp_path / "sessions"))
+
+
+class _SingleResponseProvider(BaseLLMProvider):
+    def __init__(self, text: str):
+        self._response = LLMResponse(
+            text=text,
+            tool_calls=[],
+            stop_reason="end_turn",
+            assistant_message={"role": "assistant", "content": text},
+        )
+
+    def chat(self, messages, system, tools, max_tokens=16000) -> LLMResponse:
+        return self._response
+
+    def format_tool_result(self, tool_call_id: str, content: str) -> dict:
+        return {"type": "tool_result", "tool_use_id": tool_call_id, "content": content}
+
+    def tool_results_as_message(self, results: list[dict]) -> list[dict]:
+        return [{"role": "user", "content": results}]
 
 
 class TestMigrations:
@@ -93,3 +116,66 @@ class TestStore:
     def test_delete_rejects_path_traversal_session_id(self):
         with pytest.raises(ValueError):
             delete("../escape")
+
+    def test_runtime_persistence_uses_settings_sessions_dir(self, tmp_path, monkeypatch):
+        main.bootstrap(AgentSettings(workspace_root=tmp_path))
+        runtime_sessions = tmp_path / "runtime-sessions"
+        global_sessions = tmp_path / "global-sessions"
+        monkeypatch.setattr(config, "SESSIONS_DIR", str(global_sessions))
+
+        from agent_framework.core.agent import run
+
+        result = run(
+            "remember this",
+            provider=_SingleResponseProvider("done"),
+            session_id="runtime-session",
+            settings=AgentSettings(
+                workspace_root=tmp_path,
+                sessions_dir=runtime_sessions,
+            ),
+        )
+
+        assert result == "done"
+        assert (runtime_sessions / "runtime-session.json").exists()
+        assert not (global_sessions / "runtime-session.json").exists()
+
+    def test_load_history_with_provider_check_uses_settings_sessions_dir(self, tmp_path, monkeypatch):
+        runtime_sessions = tmp_path / "runtime-sessions"
+        runtime_sessions.mkdir()
+        global_sessions = tmp_path / "global-sessions"
+        global_sessions.mkdir()
+        monkeypatch.setattr(config, "SESSIONS_DIR", str(global_sessions))
+        (runtime_sessions / "session-a.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "provider": "anthropic",
+                    "messages": [{"role": "user", "content": "from runtime"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        history = _load_history_with_provider_check(
+            "session-a",
+            "anthropic",
+            RunContext(session_id="session-a"),
+            settings=AgentSettings(
+                workspace_root=tmp_path,
+                sessions_dir=runtime_sessions,
+            ),
+        )
+
+        assert history == [{"role": "user", "content": "from runtime"}]
+
+    def test_save_creates_nested_settings_sessions_dir_parents(self, tmp_path):
+        nested_sessions = tmp_path / "nested" / "runtime" / "sessions"
+
+        save(
+            "nested-session",
+            [{"role": "user", "content": "hello"}],
+            "anthropic",
+            sessions_dir=nested_sessions,
+        )
+
+        assert (nested_sessions / "nested-session.json").exists()

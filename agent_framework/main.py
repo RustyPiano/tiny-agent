@@ -21,6 +21,7 @@ from agent_framework.core.logging import RunContext, log_event, setup_logging
 from agent_framework.extensions.loader import load_extensions
 from agent_framework.llm.factory import create_provider
 from agent_framework.skills import discover_skills
+from agent_framework.tools import registry as tool_registry
 from agent_framework.tools.bash_tool import register_bash_tool
 from agent_framework.tools.edit_file_tool import register_edit_file_tool
 from agent_framework.tools.file_tools import register_file_tools
@@ -100,15 +101,17 @@ def bootstrap(settings: AgentSettings) -> None:
         RunContext(),
         **event_fields,
     )
-    register_file_tools()
-    register_edit_file_tool()
-    register_bash_tool()
+    tool_registry.clear_tools()
+    tool_registry.clear_before_tool_call_hooks()
+    register_file_tools(workspace_root=settings.workspace_root)
+    register_edit_file_tool(workspace_root=settings.workspace_root)
+    register_bash_tool(workspace_root=settings.workspace_root)
     register_skill_tool()
     register_summarize_tool()
     register_finish_tool()
-    register_list_dir_tool()
-    register_grep_tool()
-    register_job_tools()
+    register_list_dir_tool(workspace_root=settings.workspace_root)
+    register_grep_tool(workspace_root=settings.workspace_root)
+    register_job_tools(workspace_root=settings.workspace_root)
     try:
         result = load_extensions()
         for ext in result["loaded"]:

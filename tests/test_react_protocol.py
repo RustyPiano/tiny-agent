@@ -95,11 +95,13 @@ def test_parse_react_json_rejects_invalid_action_input_type() -> None:
         parse_react_json(raw, allowed_actions={"run_bash", "NONE"})
 
 
-def test_parse_react_json_rejects_extra_keys() -> None:
+def test_parse_react_json_accepts_extra_keys() -> None:
     raw = '{"thought":"ok","action":"run_bash","action_input":{"command":"echo hi"},"extra":"x"}'
 
-    with pytest.raises(ValueError, match="keys"):
-        parse_react_json(raw, allowed_actions={"run_bash", "NONE"})
+    result = parse_react_json(raw, allowed_actions={"run_bash", "NONE"})
+    assert result.thought == "ok"
+    assert result.action == "run_bash"
+    assert result.action_input == {"command": "echo hi"}
 
 
 def test_runtime_execute_tools_uses_react_json_parser_path_without_list_tools() -> None:

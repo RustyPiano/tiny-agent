@@ -1,9 +1,18 @@
+import pathlib
+
 from agent_framework.tools.file_tools import _validate_path
 from agent_framework.tools.registry import register
 
 
-def edit_file(path: str, old_str: str, new_str: str, replace_all: bool = False) -> str:
-    p, err = _validate_path(path)
+def edit_file(
+    path: str,
+    old_str: str,
+    new_str: str,
+    replace_all: bool = False,
+    *,
+    workspace_root: pathlib.Path | None = None,
+) -> str:
+    p, err = _validate_path(path, workspace_root=workspace_root)
     if err:
         return f"[error] {err}"
 
@@ -38,7 +47,16 @@ def edit_file(path: str, old_str: str, new_str: str, replace_all: bool = False) 
     return f"[ok] 已更新文件: {path}"
 
 
-def register_edit_file_tool() -> None:
+def register_edit_file_tool(workspace_root: pathlib.Path | None = None) -> None:
+    def _handler(path: str, old_str: str, new_str: str, replace_all: bool = False) -> str:
+        return edit_file(
+            path,
+            old_str,
+            new_str,
+            replace_all=replace_all,
+            workspace_root=workspace_root,
+        )
+
     register(
         name="edit_file",
         description="在文件中查找 old_str 并替换为 new_str。",
@@ -52,5 +70,5 @@ def register_edit_file_tool() -> None:
             },
         },
         required=["path", "old_str", "new_str"],
-        handler=edit_file,
+        handler=_handler,
     )

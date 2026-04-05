@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_framework.core.prompt_builder import build_system_prompt
 from agent_framework.tools import registry
 
 
@@ -27,6 +28,9 @@ def test_load_project_hello_tool_extension():
     assert result["failed_ids"] == []
     assert "hello_tool" in registry.list_tools()
     assert "hello" in registry.execute("hello_tool", {})
+    prompt = build_system_prompt(tool_schemas=registry.get_schemas())
+    assert "## 允许的工具（运行时注册）" in prompt
+    assert "- hello_tool" in prompt
 
 
 def test_extension_failure_does_not_stop_loading(tmp_path):

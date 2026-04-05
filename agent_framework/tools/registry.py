@@ -30,6 +30,10 @@ def get_schemas() -> list[dict]:
     return [t["schema"] for t in _TOOLS.values()]
 
 
+def clear_tools() -> None:
+    _TOOLS.clear()
+
+
 def register_before_tool_call(hook: Callable[[str, dict], dict]) -> None:
     _BEFORE_TOOL_CALL_HOOKS.append(hook)
 
