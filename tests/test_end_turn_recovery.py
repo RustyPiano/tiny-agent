@@ -116,3 +116,56 @@ def test_end_turn_recovery_executes_tool() -> None:
     assert result == "done"
     assert provider._call_index == 3
     assert registry.calls == [("run_bash", {"command": "echo hi"})]
+
+
+def test_end_turn_empty_response_retries_until_non_empty_reply() -> None:
+    empty = LLMResponse(
+        text="",
+        tool_calls=[],
+        stop_reason="end_turn",
+        assistant_message={"role": "assistant", "content": ""},
+    )
+    final = LLMResponse(
+        text="done",
+        tool_calls=[],
+        stop_reason="end_turn",
+        assistant_message={"role": "assistant", "content": "done"},
+    )
+
+    registry = RecordingRegistry()
+    provider = SequenceProvider([empty, final])
+    runtime = make_runtime(provider, registry)
+
+    result = runtime.run()
+
+    assert result == "done"
+    assert provider._call_index == 2
+    assert registry.calls == []
+    messages = runtime.ctx.get()
+    observations = [
+        msg.get("content", "")
+        for msg in messages
+        if msg.get("role") == "user"
+        and isinstance(msg.get("content"), str)
+        and "empty response at end_turn" in msg.get("content", "")
+    ]
+    assert len(observations) == 1
+
+
+def test_end_turn_empty_response_retry_exhaustion_returns_warning() -> None:
+    empty = LLMResponse(
+        text="",
+        tool_calls=[],
+        stop_reason="end_turn",
+        assistant_message={"role": "assistant", "content": ""},
+    )
+
+    registry = RecordingRegistry()
+    provider = SequenceProvider([empty, empty, empty])
+    runtime = make_runtime(provider, registry)
+
+    result = runtime.run()
+
+    assert result == "[warn] 模型在 end_turn 返回空响应，重试 2 次后仍为空。"
+    assert provider._call_index == 3
+    assert registry.calls == []

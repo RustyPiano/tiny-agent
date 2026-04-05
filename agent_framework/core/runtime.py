@@ -44,6 +44,7 @@ class TurnState:
     response: LLMResponse | None = None
     react_format_retries: int = 0
     end_turn_react_parse_retries: int = 0
+    end_turn_empty_retries: int = 0
 
 
 REACT_FORMAT_MAX_RETRIES = 3
@@ -59,6 +60,8 @@ END_TURN_REACT_PARSE_MAX_RETRIES = 2
 END_TURN_REACT_PARSE_RETRY_EXHAUSTED_PAYLOAD = (
     '{"thought":"end_turn_parse_retry_exhausted","action":"NONE","action_input":"NONE"}'
 )
+END_TURN_EMPTY_MAX_RETRIES = 2
+END_TURN_EMPTY_RETRY_EXHAUSTED_MESSAGE = "[warn] 模型在 end_turn 返回空响应，重试 2 次后仍为空。"
 
 
 class AgentRuntime:
@@ -746,6 +749,13 @@ class AgentRuntime:
             'and action_input must be an object or the string "NONE".'
         )
 
+    def _end_turn_empty_response_observation(self) -> str:
+        return (
+            "Observation: assistant returned an empty response at end_turn. "
+            "Reply with either a non-empty final answer for the user, "
+            'or strict ReAct JSON with keys {"thought","action","action_input"} if more work is needed.'
+        )
+
     def _parse_finish_output(self, tc, output_text, parse_error) -> dict | None:
         if parse_error:
             return None
@@ -1087,7 +1097,22 @@ class AgentRuntime:
                         self.ctx.add_user(self._end_turn_parse_error_observation(parse_error))
                         self.state.response = None
                         continue
+                    if not str(current_response.text or "").strip():
+                        self.state.end_turn_empty_retries += 1
+                        if self.state.end_turn_empty_retries > END_TURN_EMPTY_MAX_RETRIES:
+                            self.persist_session()
+                            log_event(
+                                "run_end",
+                                self.run_ctx,
+                                stop_reason="end_turn_empty_retry_exhausted",
+                            )
+                            return END_TURN_EMPTY_RETRY_EXHAUSTED_MESSAGE
+                        self.ctx.add_user(self._end_turn_empty_response_observation())
+                        self.state.response = None
+                        continue
+                    self.state.end_turn_empty_retries = 0
                 self.state.end_turn_react_parse_retries = 0
+                self.state.end_turn_empty_retries = 0
                 if current_response is not None:
                     self._print_turn_summary(current_response)
                 self.persist_session()
