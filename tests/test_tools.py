@@ -1,7 +1,11 @@
 # tests/test_tools.py
 import json
+import os
 import re
+import time
 from pathlib import Path
+
+import pytest
 
 from agent_framework import _config as config
 from agent_framework._config import AgentSettings
@@ -163,17 +167,17 @@ def test_bootstrap_registers_run_bash_with_settings_workspace_root(monkeypatch, 
     observed: dict = {}
     monkeypatch.setattr(config, "WORKSPACE_ROOT", global_root)
 
-    def fake_run(*args, **kwargs):
-        observed["cwd"] = kwargs.get("cwd")
+    class _FakePopen:
+        returncode = 0
 
-        class Result:
-            stdout = "ok\n"
-            stderr = ""
-            returncode = 0
+        def __init__(self, *args, **kwargs):
+            observed["cwd"] = kwargs.get("cwd")
 
-        return Result()
+        def communicate(self, timeout=None):
+            _ = timeout
+            return ("ok\n", "")
 
-    monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
+    monkeypatch.setattr(bash_tool.subprocess, "Popen", _FakePopen)
     bootstrap(settings=AgentSettings(workspace_root=settings_root))
 
     result = registry.execute("run_bash", {"command": "pwd"})
@@ -307,17 +311,14 @@ def test_bash_rejects_detached_command_with_job_guidance():
     result = run_bash("sleep 1 &")
 
     assert "[blocked]" in result
-    assert "start_job" in result
-    assert "poll_job" in result
-    assert "read_job_log" in result
-    assert "cancel_job" in result
+    assert "run_job" in result
 
 
 def test_bash_rejects_background_operator_not_only_at_end():
     result = run_bash("sleep 30 & echo done")
 
     assert "[blocked]" in result
-    assert "start_job" in result
+    assert "run_job" in result
 
 
 def test_bash_allows_fd_redirection_2_to_1_not_detached():
@@ -354,35 +355,72 @@ def test_bash_missing_timeout_binary_returns_cross_platform_hint(monkeypatch):
     assert "coreutils" in result
 
 
-def test_bash_adaptive_timeout_for_long_commands(monkeypatch):
+def test_bash_default_timeout_is_fixed_short_timeout(monkeypatch):
     observed_timeouts: list[int | None] = []
 
-    def fake_run(*args, **kwargs):
-        observed_timeouts.append(kwargs.get("timeout"))
-        return bash_tool.subprocess.CompletedProcess(
-            args=args[0], returncode=0, stdout="ok", stderr=""
-        )
+    class _FakePopen:
+        def __init__(self, *args, **kwargs):
+            observed_timeouts.append(None)
+            self.returncode = 0
 
-    monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
+        def communicate(self, timeout=None):
+            observed_timeouts[-1] = timeout
+            return ("ok", "")
+
+    monkeypatch.setattr(bash_tool.subprocess, "Popen", _FakePopen)
 
     run_bash("npm install")
     run_bash("pytest tests/test_tools.py")
     run_bash("echo hello")
 
-    assert observed_timeouts[0] == 300
-    assert observed_timeouts[1] == 180
-    assert observed_timeouts[2] == 60
+    assert observed_timeouts == [30, 30, 30]
+
+
+def test_bash_timeout_kills_child_process_tree(tmp_path):
+    if os.name != "posix":
+        return
+
+    pidfile = tmp_path / "child.pid"
+    command = (
+        "python3 -c \"import pathlib,subprocess,time; "
+        "p=subprocess.Popen(['python3','-c','import time; time.sleep(30)']); "
+        f"pathlib.Path(r'{pidfile}').write_text(str(p.pid)); "
+        "time.sleep(30)\""
+    )
+
+    result = run_bash(
+        command,
+        timeout=1,
+        workdir=str(tmp_path),
+        workspace_root=tmp_path,
+    )
+
+    assert "[timeout]" in result
+    for _ in range(20):
+        if pidfile.exists():
+            break
+        time.sleep(0.1)
+    assert pidfile.exists() is True
+
+    child_pid = int(pidfile.read_text(encoding="utf-8"))
+    time.sleep(0.2)
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
 
 
 def test_bash_truncation_includes_saved_full_output_path(monkeypatch):
     monkeypatch.setattr(bash_tool, "OUTPUT_TRUNCATE", 10)
 
-    def fake_run(*args, **kwargs):
-        return bash_tool.subprocess.CompletedProcess(
-            args=args[0], returncode=0, stdout="x" * 50, stderr=""
-        )
+    class _FakePopen:
+        returncode = 0
 
-    monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def communicate(self, timeout=None):
+            return ("x" * 50, "")
+
+    monkeypatch.setattr(bash_tool.subprocess, "Popen", _FakePopen)
 
     result = run_bash("echo oversize")
 
@@ -396,13 +434,16 @@ def test_bash_truncation_includes_saved_full_output_path(monkeypatch):
 def test_bash_explicit_timeout_uses_legacy_behavior(monkeypatch):
     observed_timeouts: list[int | None] = []
 
-    def fake_run(*args, **kwargs):
-        observed_timeouts.append(kwargs.get("timeout"))
-        return bash_tool.subprocess.CompletedProcess(
-            args=args[0], returncode=0, stdout="", stderr=""
-        )
+    class _FakePopen:
+        def __init__(self, *args, **kwargs):
+            observed_timeouts.append(None)
+            self.returncode = 0
 
-    monkeypatch.setattr(bash_tool.subprocess, "run", fake_run)
+        def communicate(self, timeout=None):
+            observed_timeouts[-1] = timeout
+            return ("", "")
+
+    monkeypatch.setattr(bash_tool.subprocess, "Popen", _FakePopen)
 
     result = run_bash("true", timeout=30)
 

@@ -23,12 +23,17 @@ class _JobRecord:
     cancelled: bool = False
     cancel_signal: str | None = None
     finished_at: float | None = None
+    last_output_at: float | None = None
+    last_observed_size: int = 0
+    tail_cache: str = ""
 
 
 _MAX_JOB_RECORDS = 256
 _TERMINAL_JOB_TTL_SEC = 3600.0
 _MAX_RUNNING_JOBS = 16
-_MAX_JOB_LOG_BYTES = 4000
+_MAX_OUTPUT_TAIL_BYTES = 2000
+_JOB_QUIET_THRESHOLD_SEC = 5.0
+_JOB_STALLED_THRESHOLD_SEC = 30.0
 
 
 _JOBS: dict[str, _JobRecord] = {}
@@ -43,11 +48,6 @@ def _ok(payload: dict) -> str:
 
 def _err(error: str, message: str) -> str:
     return json.dumps({"ok": False, "error": error, "message": message}, ensure_ascii=False)
-
-
-def _get_job(job_id: str) -> _JobRecord | None:
-    with _LOCK:
-        return _JOBS.get(job_id)
 
 
 def _resolve_workspace_root(workspace_root: pathlib.Path | str | None = None) -> pathlib.Path:
@@ -114,22 +114,94 @@ def _cleanup_jobs_locked() -> None:
             pass
 
 
-def _finalize_completed_jobs_locked() -> None:
-    """Mark completed processes with finished_at timestamp."""
-    for record in _JOBS.values():
-        if record.finished_at is None and record.process.poll() is not None:
-            record.finished_at = time.time()
-
-
 def _running_jobs_count_locked() -> int:
-    running = 0
-    for record in _JOBS.values():
-        if record.process.poll() is None:
-            running += 1
-    return running
+    return sum(1 for record in _JOBS.values() if record.process.poll() is None)
 
 
-def start_job(
+def _tail_log(log_path: str, max_bytes: int = _MAX_OUTPUT_TAIL_BYTES) -> tuple[str, int, float | None]:
+    try:
+        size = os.path.getsize(log_path)
+    except OSError:
+        return "", 0, None
+
+    try:
+        with open(log_path, "rb") as fp:
+            if size > max_bytes:
+                fp.seek(size - max_bytes)
+            chunk = fp.read(max_bytes)
+        mtime = os.path.getmtime(log_path) if size > 0 else None
+    except OSError:
+        return "", size, None
+
+    return chunk.decode("utf-8", errors="replace"), size, mtime
+
+
+def _final_status(record: _JobRecord) -> str:
+    exit_code = record.process.poll()
+    if exit_code is None:
+        return "running"
+    if record.cancelled:
+        return "cancelled"
+    if exit_code == 0:
+        return "succeeded"
+    return "failed"
+
+
+def _activity_for(record: _JobRecord, now: float, file_size: int) -> str:
+    if record.process.poll() is not None:
+        return "quiet"
+
+    if file_size > record.last_observed_size:
+        return "active"
+
+    reference_ts = record.last_output_at or record.started_at
+    silence = max(0.0, now - reference_ts)
+    if silence >= _JOB_STALLED_THRESHOLD_SEC:
+        return "stalled"
+    if silence >= _JOB_QUIET_THRESHOLD_SEC:
+        return "quiet"
+    return "active"
+
+
+def _recommended_poll_after(activity: str, terminal: bool) -> int | None:
+    if terminal:
+        return None
+    if activity == "active":
+        return 2
+    if activity == "quiet":
+        return 5
+    return 10
+
+
+def _refresh_record_locked(record: _JobRecord) -> dict:
+    now = time.time()
+    output_tail, file_size, last_output_at = _tail_log(record.log_path)
+    if last_output_at is not None:
+        record.last_output_at = last_output_at
+    activity = _activity_for(record, now, file_size)
+    record.last_observed_size = file_size
+    record.tail_cache = output_tail
+
+    exit_code = record.process.poll()
+    terminal = exit_code is not None
+    if terminal and record.finished_at is None:
+        record.finished_at = now
+
+    status = _final_status(record)
+    return {
+        "job_id": record.job_id,
+        "status": status,
+        "activity": activity,
+        "duration_sec": max(0.0, now - record.started_at),
+        "last_output_at": record.last_output_at,
+        "output_tail": record.tail_cache,
+        "recommended_poll_after_s": _recommended_poll_after(activity, terminal),
+        "terminal": terminal,
+        **({"exit_code": exit_code} if terminal else {}),
+    }
+
+
+def _start_job(
     command: str,
     workdir: str | None = None,
     *,
@@ -144,9 +216,7 @@ def start_job(
     if block_reason:
         return _err("invalid_argument", f"blocked command: {block_reason}")
     if _is_detached_command(command):
-        return _err(
-            "invalid_argument", "background/detached operator '&' is not allowed in start_job"
-        )
+        return _err("invalid_argument", "background/detached operator '&' is not allowed in run_job")
 
     resolved_workdir, err = _resolve_workdir(workdir, workspace_root=workspace_root)
     if err is not None:
@@ -154,19 +224,17 @@ def start_job(
 
     with _LOCK:
         _cleanup_jobs_locked()
-        _finalize_completed_jobs_locked()
         if _running_jobs_count_locked() >= _MAX_RUNNING_JOBS:
-            return _err(
-                "too_many_running_jobs",
-                f"running jobs exceed limit: {_MAX_RUNNING_JOBS}",
-            )
+            return _err("too_many_running_jobs", f"running jobs exceed limit: {_MAX_RUNNING_JOBS}")
 
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         started_at = time.time()
-
         try:
             with tempfile.NamedTemporaryFile(
-                mode="wb", delete=False, prefix="agent_job_", suffix=".log"
+                mode="wb",
+                delete=False,
+                prefix="agent_job_",
+                suffix=".log",
             ) as fp:
                 log_path = fp.name
 
@@ -190,19 +258,12 @@ def start_job(
             log_path=log_path,
         )
         _JOBS[job_id] = record
+        payload = _refresh_record_locked(record)
 
-    return _ok(
-        {
-            "job_id": job_id,
-            "pid": process.pid,
-            "status": "running",
-            "started_at": started_at,
-            "log_path": log_path,
-        }
-    )
+    return _ok(payload)
 
 
-def poll_job(job_id: str) -> str:
+def _status_job(job_id: str) -> str:
     if not isinstance(job_id, str) or not job_id:
         return _err("invalid_argument", "job_id must be a non-empty string")
 
@@ -211,81 +272,12 @@ def poll_job(job_id: str) -> str:
         record = _JOBS.get(job_id)
         if record is None:
             return _err("job_not_found", f"job not found: {job_id}")
+        payload = _refresh_record_locked(record)
 
-        exit_code = record.process.poll()
-        status = "running"
-        if exit_code is not None:
-            status = "cancelled" if record.cancelled else "exited"
-            if record.finished_at is None:
-                record.finished_at = time.time()
-
-        duration_sec = max(0.0, time.time() - record.started_at)
-    return _ok(
-        {
-            "job_id": record.job_id,
-            "status": status,
-            "pid": record.process.pid,
-            "exit_code": exit_code,
-            "duration_sec": duration_sec,
-        }
-    )
+    return _ok(payload)
 
 
-def read_job_log(job_id: str, offset: int = 0, limit: int = 4000) -> str:
-    if not isinstance(job_id, str) or not job_id:
-        return _err("invalid_argument", "job_id must be a non-empty string")
-    if not isinstance(offset, int) or offset < 0:
-        return _err("invalid_argument", "offset must be an integer >= 0")
-    if not isinstance(limit, int) or limit < 0:
-        return _err("invalid_argument", "limit must be an integer >= 0")
-
-    effective_limit = min(limit, _MAX_JOB_LOG_BYTES)
-
-    with _LOCK:
-        _cleanup_jobs_locked()
-        record = _JOBS.get(job_id)
-        if record is None:
-            return _err("job_not_found", f"job not found: {job_id}")
-        log_path = record.log_path
-
-    try:
-        with open(log_path, "rb") as fp:
-            fp.seek(offset)
-            chunk = fp.read(effective_limit)
-            next_offset = offset + len(chunk)
-            file_size = fp.seek(0, os.SEEK_END)
-    except Exception as e:
-        return _err("io_error", f"failed to read log: {e}")
-
-    content = chunk.decode("utf-8", errors="replace")
-    truncated = effective_limit > 0 and next_offset < file_size
-    return _ok(
-        {
-            "job_id": record.job_id,
-            "offset": offset,
-            "limit": effective_limit,
-            "next_offset": next_offset,
-            "bytes_read": len(chunk),
-            "eof": next_offset >= file_size,
-            "truncated": truncated,
-            "content": content,
-            "preview": content[:200],
-            **(
-                {
-                    "continuation": {
-                        "tool": "read_job_log",
-                        "job_id": job_id,
-                        "offset": next_offset,
-                        "limit": effective_limit,
-                    }
-                }
-                if truncated
-                else {}
-            ),
-        }
-    )
-
-def cancel_job(job_id: str, force: bool = False) -> str:
+def _cancel_job(job_id: str, force: bool = False) -> str:
     if not isinstance(job_id, str) or not job_id:
         return _err("invalid_argument", "job_id must be a non-empty string")
     if not isinstance(force, bool):
@@ -305,7 +297,6 @@ def cancel_job(job_id: str, force: bool = False) -> str:
 
     used_signal = "SIGKILL" if force else "SIGTERM"
     sig_value = signal.SIGKILL if force else signal.SIGTERM
-
     try:
         if os.name == "posix":
             os.killpg(os.getpgid(pid), sig_value)
@@ -331,67 +322,76 @@ def cancel_job(job_id: str, force: bool = False) -> str:
         record.cancelled = True
         record.cancel_signal = used_signal
         record.finished_at = time.time()
+        payload = _refresh_record_locked(record)
+        payload["message"] = f"cancelled with {used_signal}"
 
-    return _ok(
-        {
-            "job_id": record.job_id,
-            "status": "cancelled",
-            "signal": used_signal,
-            "exit_code": process.poll(),
-        }
-    )
+    return _ok(payload)
+
+
+def run_job(
+    operation: str,
+    job_id: str | None = None,
+    command: str | None = None,
+    workdir: str | None = None,
+    force: bool = False,
+    *,
+    workspace_root: pathlib.Path | str | None = None,
+) -> str:
+    if operation == "start":
+        return _start_job(command or "", workdir=workdir, workspace_root=workspace_root)
+    if operation == "status":
+        return _status_job(job_id or "")
+    if operation == "cancel":
+        return _cancel_job(job_id or "", force=force)
+    return _err("invalid_argument", "operation must be one of: start, status, cancel")
 
 
 def register_job_tools(workspace_root: pathlib.Path | str | None = None) -> None:
-    def _start_handler(command: str, workdir: str | None = None) -> str:
-        return start_job(command, workdir=workdir, workspace_root=workspace_root)
+    def _handler(
+        operation: str,
+        job_id: str | None = None,
+        command: str | None = None,
+        workdir: str | None = None,
+        force: bool = False,
+    ) -> str:
+        return run_job(
+            operation=operation,
+            job_id=job_id,
+            command=command,
+            workdir=workdir,
+            force=force,
+            workspace_root=workspace_root,
+        )
 
     register(
-        name="start_job",
-        description="Start a managed background shell job and return its job metadata.",
+        name="run_job",
+        description=(
+            "管理后台 shell 任务。"
+            "operation=start 启动长任务，operation=status 查询高信号状态，"
+            "operation=cancel 取消任务。"
+        ),
         parameters={
-            "command": {"type": "string", "description": "Shell command to run in background"},
+            "operation": {
+                "type": "string",
+                "description": "操作类型：start | status | cancel",
+            },
+            "job_id": {
+                "type": ["string", "null"],
+                "description": "status/cancel 时必填的任务 ID",
+            },
+            "command": {
+                "type": ["string", "null"],
+                "description": "start 时必填的 shell 命令",
+            },
             "workdir": {
                 "type": ["string", "null"],
-                "description": "Optional working directory for command execution",
+                "description": "start 时可选的工作目录",
             },
-        },
-        required=["command"],
-        handler=_start_handler,
-    )
-    register(
-        name="poll_job",
-        description="Poll a managed background job status and exit information.",
-        parameters={
-            "job_id": {"type": "string", "description": "Job id returned by start_job"},
-        },
-        required=["job_id"],
-        handler=poll_job,
-    )
-    register(
-        name="read_job_log",
-        description="Read incremental bytes from managed job log by UTF-8 byte offset.",
-        parameters={
-            "job_id": {"type": "string", "description": "Job id returned by start_job"},
-            "offset": {
-                "type": "integer",
-                "description": "UTF-8 byte offset to start reading log content",
-            },
-            "limit": {"type": "integer", "description": "Maximum bytes to read from log"},
-        },
-        required=["job_id"],
-        handler=read_job_log,
-    )
-    register(
-        name="cancel_job",
-        description="Cancel a managed background job with SIGTERM or SIGKILL.",
-        parameters={
-            "job_id": {"type": "string", "description": "Job id returned by start_job"},
             "force": {
                 "type": "boolean",
-                "description": "If true, use SIGKILL directly; otherwise use SIGTERM then escalate",
+                "description": "cancel 时是否直接强制终止",
             },
         },
-        required=["job_id"],
-        handler=cancel_job,
+        required=["operation"],
+        handler=_handler,
     )

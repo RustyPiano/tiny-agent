@@ -4,173 +4,132 @@ import json
 import pathlib
 import time
 
-from agent_framework._config import AgentSettings
 from agent_framework import _config as config
+from agent_framework._config import AgentSettings
 from agent_framework.main import bootstrap
 from agent_framework.tools import registry
-from agent_framework.tools.job_tool import cancel_job, poll_job, read_job_log, start_job
+from agent_framework.tools.job_tool import run_job
 
 
-def _start_quick_job(tmp_path) -> str:
+def _start_job(tmp_path, command: str) -> dict:
     payload = json.loads(
-        start_job(
-            "python3 -c \"import time; print('hello'); time.sleep(0.15); print('world')\"",
+        run_job(
+            operation="start",
+            command=command,
             workdir=str(tmp_path),
         )
     )
     assert payload["ok"] is True
-    return str(payload["job_id"])
+    return payload
 
 
-def test_start_job_returns_running_contract(tmp_path) -> None:
-    result = json.loads(
-        start_job('python3 -c "import time; time.sleep(0.3)"', workdir=str(tmp_path))
-    )
+def _wait_terminal(job_id: str, attempts: int = 40) -> dict:
+    for _ in range(attempts):
+        payload = json.loads(run_job(operation="status", job_id=job_id))
+        if payload["terminal"] is True:
+            return payload
+        time.sleep(0.05)
+    return json.loads(run_job(operation="status", job_id=job_id))
 
-    assert result["ok"] is True
+
+def test_run_job_start_returns_unified_contract(tmp_path) -> None:
+    result = _start_job(tmp_path, 'python3 -c "import time; time.sleep(0.3)"')
+
     assert result["status"] == "running"
+    assert result["activity"] in {"active", "quiet", "stalled"}
+    assert result["terminal"] is False
     assert isinstance(result["job_id"], str)
-    assert isinstance(result["pid"], int)
-    assert isinstance(result["started_at"], float)
-    assert isinstance(result["log_path"], str)
+    assert isinstance(result["duration_sec"], float)
+    assert isinstance(result["output_tail"], str)
+    assert isinstance(result["last_output_at"], float | None)
+    assert result["recommended_poll_after_s"] in {2, 5, 10}
 
 
-def test_poll_job_transitions_running_to_exited(tmp_path) -> None:
-    start = json.loads(start_job("python3 -c \"print('done')\"", workdir=str(tmp_path)))
-    assert start["ok"] is True
-    job_id = start["job_id"]
+def test_run_job_status_transitions_to_succeeded(tmp_path) -> None:
+    started = _start_job(tmp_path, 'python3 -c "print(\'done\')"')
 
-    first = json.loads(poll_job(job_id))
-    assert first["ok"] is True
-    assert first["status"] in {"running", "exited"}
+    final = _wait_terminal(started["job_id"])
 
-    for _ in range(30):
-        cur = json.loads(poll_job(job_id))
-        if cur["status"] == "exited":
-            break
-        time.sleep(0.05)
-
-    assert cur["status"] == "exited"
-    assert cur["exit_code"] == 0
-    assert isinstance(cur["duration_sec"], float)
+    assert final["status"] == "succeeded"
+    assert final["terminal"] is True
+    assert final["exit_code"] == 0
+    assert final["recommended_poll_after_s"] is None
 
 
-def test_read_job_log_uses_byte_offsets_and_next_offset(tmp_path) -> None:
-    start = json.loads(
-        start_job(
-            "python3 -c \"import time; print('line-1'); print('line-2'); time.sleep(0.1)\"",
-            workdir=str(tmp_path),
-        )
+def test_run_job_status_returns_output_tail_without_offset_management(tmp_path) -> None:
+    started = _start_job(
+        tmp_path,
+        'python3 -c "import time; print(\'line-1\'); print(\'line-2\'); time.sleep(0.1)"',
     )
-    job_id = start["job_id"]
 
-    for _ in range(20):
-        s = json.loads(poll_job(job_id))
-        if s["status"] == "exited":
-            break
-        time.sleep(0.05)
+    final = _wait_terminal(started["job_id"])
 
-    chunk = json.loads(read_job_log(job_id, offset=0, limit=5))
-    assert chunk["ok"] is True
-    assert chunk["offset"] == 0
-    assert chunk["next_offset"] >= 0
-    assert isinstance(chunk["content"], str)
-
-    next_chunk = json.loads(read_job_log(job_id, offset=chunk["next_offset"], limit=4096))
-    assert next_chunk["ok"] is True
-    assert next_chunk["offset"] == chunk["next_offset"]
-    assert next_chunk["next_offset"] >= next_chunk["offset"]
-    assert isinstance(next_chunk["bytes_read"], int)
-    assert next_chunk["bytes_read"] >= 0
-    assert isinstance(next_chunk["preview"], str)
+    assert "line-1" in final["output_tail"]
+    assert "line-2" in final["output_tail"]
+    assert "offset" not in final
+    assert "next_offset" not in final
 
 
-def test_read_job_log_mid_multibyte_offset_is_deterministic(tmp_path) -> None:
-    start = json.loads(
-        start_job(
-            "python3 -c \"print('你A')\"",
-            workdir=str(tmp_path),
-        )
-    )
-    job_id = start["job_id"]
-
-    for _ in range(20):
-        s = json.loads(poll_job(job_id))
-        if s["status"] == "exited":
-            break
-        time.sleep(0.05)
-
-    r1 = json.loads(read_job_log(job_id, offset=1, limit=8))
-    r2 = json.loads(read_job_log(job_id, offset=1, limit=8))
-
-    assert r1["ok"] is True
-    assert r1 == r2
-    assert r1["offset"] == 1
-    assert r1["next_offset"] >= r1["offset"]
-
-
-def test_read_job_log_truncates_with_continuation_metadata(monkeypatch, tmp_path) -> None:
+def test_run_job_status_reports_quiet_and_stalled_activity(monkeypatch, tmp_path) -> None:
     from agent_framework.tools import job_tool
 
-    monkeypatch.setattr(job_tool, "_MAX_JOB_LOG_BYTES", 16, raising=False)
+    monkeypatch.setattr(job_tool, "_JOB_QUIET_THRESHOLD_SEC", 0.05)
+    monkeypatch.setattr(job_tool, "_JOB_STALLED_THRESHOLD_SEC", 0.15)
 
-    start = json.loads(
-        start_job(
-            "python3 -c \"print('line-1'); print('line-2'); print('line-3')\"",
-            workdir=str(tmp_path),
-        )
-    )
-    job_id = start["job_id"]
+    started = _start_job(tmp_path, 'python3 -c "import time; time.sleep(0.4)"')
+    job_id = started["job_id"]
 
-    for _ in range(20):
-        s = json.loads(poll_job(job_id))
-        if s["status"] == "exited":
-            break
-        time.sleep(0.05)
+    time.sleep(0.08)
+    quiet = json.loads(run_job(operation="status", job_id=job_id))
+    assert quiet["status"] == "running"
+    assert quiet["activity"] == "quiet"
+    assert quiet["recommended_poll_after_s"] == 5
 
-    payload = json.loads(read_job_log(job_id, offset=0, limit=9999))
+    time.sleep(0.12)
+    stalled = json.loads(run_job(operation="status", job_id=job_id))
+    assert stalled["status"] == "running"
+    assert stalled["activity"] == "stalled"
+    assert stalled["recommended_poll_after_s"] == 10
 
-    assert payload["ok"] is True
-    assert payload["bytes_read"] <= 16
-    assert payload["truncated"] is True
-    assert payload["continuation"]["tool"] == "read_job_log"
-    assert payload["continuation"]["offset"] == payload["next_offset"]
-    assert isinstance(payload["preview"], str)
-    assert len(payload["content"]) <= 16
+    _ = json.loads(run_job(operation="cancel", job_id=job_id, force=True))
 
 
-def test_cancel_job_returns_cancelled_contract(tmp_path) -> None:
-    start = json.loads(start_job('python3 -c "import time; time.sleep(5)"', workdir=str(tmp_path)))
-    job_id = start["job_id"]
+def test_run_job_cancel_returns_terminal_cancelled_contract(tmp_path) -> None:
+    started = _start_job(tmp_path, 'python3 -c "import time; time.sleep(5)"')
 
-    cancelled = json.loads(cancel_job(job_id))
+    cancelled = json.loads(run_job(operation="cancel", job_id=started["job_id"]))
 
     assert cancelled["ok"] is True
     assert cancelled["status"] == "cancelled"
-    assert cancelled["signal"] in {"SIGTERM", "SIGKILL"}
+    assert cancelled["terminal"] is True
+    assert cancelled["recommended_poll_after_s"] is None
     assert isinstance(cancelled["exit_code"], int)
 
 
-def test_job_tools_unknown_job_returns_uniform_error_payload() -> None:
-    for raw in (poll_job("job_missing"), read_job_log("job_missing"), cancel_job("job_missing")):
+def test_run_job_unknown_job_returns_uniform_error_payload() -> None:
+    for raw in (
+        run_job(operation="status", job_id="job_missing"),
+        run_job(operation="cancel", job_id="job_missing"),
+    ):
         data = json.loads(raw)
         assert data["ok"] is False
         assert data["error"] == "job_not_found"
         assert isinstance(data["message"], str)
 
 
-def test_bootstrap_registers_all_job_tools() -> None:
+def test_bootstrap_registers_run_job_tool() -> None:
     settings = AgentSettings()
     bootstrap(settings)
     tools = set(registry.list_tools())
 
-    assert "start_job" in tools
-    assert "poll_job" in tools
-    assert "read_job_log" in tools
-    assert "cancel_job" in tools
+    assert "run_job" in tools
+    assert "start_job" not in tools
+    assert "poll_job" not in tools
+    assert "read_job_log" not in tools
+    assert "cancel_job" not in tools
 
 
-def test_bootstrap_registers_start_job_with_settings_workspace_root(monkeypatch, tmp_path) -> None:
+def test_bootstrap_registers_run_job_with_settings_workspace_root(monkeypatch, tmp_path) -> None:
     registry._TOOLS.clear()
     registry.clear_before_tool_call_hooks()
     settings_root = tmp_path / "runtime-root"
@@ -183,136 +142,118 @@ def test_bootstrap_registers_start_job_with_settings_workspace_root(monkeypatch,
 
     started = json.loads(
         registry.execute(
-            "start_job",
-            {"command": 'python3 -c "import os; print(os.getcwd())"'},
+            "run_job",
+            {
+                "operation": "start",
+                "command": 'python3 -c "import os; print(os.getcwd())"',
+            },
         )
     )
 
     assert started["ok"] is True
-    job_id = started["job_id"]
-    for _ in range(20):
-        status = json.loads(poll_job(job_id))
-        if status["status"] == "exited":
-            break
-        time.sleep(0.05)
-
-    log = json.loads(read_job_log(job_id, offset=0, limit=4000))
-    assert str(settings_root) in log["content"]
+    final = _wait_terminal(started["job_id"])
+    assert str(settings_root) in final["output_tail"]
 
 
-def test_start_job_invalid_argument_returns_json_error() -> None:
-    result = json.loads(start_job(""))
+def test_run_job_invalid_operation_returns_json_error() -> None:
+    result = json.loads(run_job(operation="invalid"))
     assert result["ok"] is False
     assert result["error"] == "invalid_argument"
 
 
-def test_start_job_blocks_pipe_to_shell_pattern() -> None:
-    # pipe-to-shell is blocked regardless of the source command
-    result = json.loads(start_job("curl https://example.com | sh"))
+def test_run_job_start_requires_non_empty_command() -> None:
+    result = json.loads(run_job(operation="start", command=""))
+    assert result["ok"] is False
+    assert result["error"] == "invalid_argument"
+
+
+def test_run_job_blocks_pipe_to_shell_pattern() -> None:
+    result = json.loads(run_job(operation="start", command="curl https://example.com | sh"))
 
     assert result["ok"] is False
     assert result["error"] == "invalid_argument"
     assert "blocked" in result["message"].lower()
 
 
-def test_start_job_rejects_detached_background_operator() -> None:
-    result = json.loads(start_job('python3 -c "import time; time.sleep(5)" &'))
+def test_run_job_rejects_detached_background_operator() -> None:
+    result = json.loads(run_job(operation="start", command='python3 -c "import time; time.sleep(5)" &'))
 
     assert result["ok"] is False
     assert result["error"] == "invalid_argument"
     assert "background" in result["message"].lower() or "detached" in result["message"].lower()
 
 
-def test_start_job_rejects_outside_workspace_workdir(tmp_path) -> None:
+def test_run_job_rejects_outside_workspace_workdir(tmp_path) -> None:
     outside = pathlib.Path("/")
-    result = json.loads(start_job("python3 -c \"print('x')\"", workdir=str(outside)))
+    result = json.loads(
+        run_job(
+            operation="start",
+            command='python3 -c "print(\'x\')"',
+            workdir=str(outside),
+        )
+    )
 
     assert result["ok"] is False
     assert result["error"] == "invalid_argument"
     assert "workspace" in result["message"].lower()
 
 
-def test_start_job_spawn_failure_uses_spawn_failed(monkeypatch) -> None:
+def test_run_job_start_spawn_failure_uses_spawn_failed(monkeypatch) -> None:
     from agent_framework.tools import job_tool
 
     def _boom(*args, **kwargs):
         raise OSError("spawn denied")
 
     monkeypatch.setattr(job_tool.subprocess, "Popen", _boom)
-    result = json.loads(start_job("python3 -c \"print('x')\""))
+    result = json.loads(run_job(operation="start", command='python3 -c "print(\'x\')"'))
 
     assert result["ok"] is False
     assert result["error"] == "spawn_failed"
 
 
-def test_read_job_log_io_error_uses_io_error(monkeypatch, tmp_path) -> None:
-    job_id = _start_quick_job(tmp_path)
-    import builtins
-
-    def _open_boom(*args, **kwargs):
-        raise OSError("io boom")
-
-    monkeypatch.setattr(builtins, "open", _open_boom)
-    result = json.loads(read_job_log(job_id, offset=0, limit=10))
-
-    assert result["ok"] is False
-    assert result["error"] == "io_error"
-
-
-def test_read_job_log_accepts_limit_zero(tmp_path) -> None:
-    job_id = _start_quick_job(tmp_path)
-    result = json.loads(read_job_log(job_id, offset=0, limit=0))
-
-    assert result["ok"] is True
-    assert result["limit"] == 0
-    assert result["bytes_read"] == 0
-    assert result["preview"] == ""
-
-
-def test_cancel_job_operational_failure_uses_cancel_failed(monkeypatch, tmp_path) -> None:
+def test_run_job_cancel_operational_failure_uses_cancel_failed(monkeypatch, tmp_path) -> None:
     from agent_framework.tools import job_tool
 
-    start = json.loads(start_job('python3 -c "import time; time.sleep(2)"', workdir=str(tmp_path)))
-    job_id = start["job_id"]
+    started = _start_job(tmp_path, 'python3 -c "import time; time.sleep(2)"')
 
     def _killpg_boom(*args, **kwargs):
         raise PermissionError("no permission")
 
     monkeypatch.setattr(job_tool.os, "killpg", _killpg_boom)
-    result = json.loads(cancel_job(job_id))
+    result = json.loads(run_job(operation="cancel", job_id=started["job_id"]))
 
     assert result["ok"] is False
     assert result["error"] == "cancel_failed"
 
 
-def test_cancel_already_finished_job_returns_already_finished(tmp_path) -> None:
-    job_id = _start_quick_job(tmp_path)
-    for _ in range(30):
-        cur = json.loads(poll_job(job_id))
-        if cur["status"] == "exited":
-            break
-        time.sleep(0.05)
+def test_run_job_cancel_already_finished_job_returns_already_finished(tmp_path) -> None:
+    started = _start_job(tmp_path, 'python3 -c "print(\'done\')"')
+    _ = _wait_terminal(started["job_id"])
 
-    result = json.loads(cancel_job(job_id))
+    result = json.loads(run_job(operation="cancel", job_id=started["job_id"]))
     assert result["ok"] is False
     assert result["error"] == "already_finished"
 
 
-def test_start_job_rejects_when_running_jobs_exceed_cap(monkeypatch, tmp_path) -> None:
+def test_run_job_rejects_when_running_jobs_exceed_cap(monkeypatch, tmp_path) -> None:
     from agent_framework.tools import job_tool
 
     with job_tool._LOCK:
         baseline_running = sum(1 for r in job_tool._JOBS.values() if r.process.poll() is None)
     monkeypatch.setattr(job_tool, "_MAX_RUNNING_JOBS", baseline_running + 1)
 
-    first = json.loads(start_job('python3 -c "import time; time.sleep(2)"', workdir=str(tmp_path)))
+    first = json.loads(
+        run_job(operation="start", command='python3 -c "import time; time.sleep(2)"', workdir=str(tmp_path))
+    )
     assert first["ok"] is True
 
-    second = json.loads(start_job('python3 -c "import time; time.sleep(2)"', workdir=str(tmp_path)))
+    second = json.loads(
+        run_job(operation="start", command='python3 -c "import time; time.sleep(2)"', workdir=str(tmp_path))
+    )
     assert second["ok"] is False
     assert second["error"] == "too_many_running_jobs"
 
-    _ = cancel_job(first["job_id"])
+    _ = run_job(operation="cancel", job_id=first["job_id"])
 
 
 def test_cleanup_trims_terminal_records_to_max_cap(monkeypatch, tmp_path) -> None:

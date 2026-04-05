@@ -200,6 +200,7 @@ description: 代码实现与重构最佳实践
 
 ## 会话与工作区
 
-- 文件工具、`run_bash`、`grep`、`list_dir`、`start_job`、`edit_file` 都会使用 `AgentSettings.workspace_root` 作为运行时工作区边界。
+- 文件工具、`run_bash`、`run_job`、`grep`、`list_dir`、`edit_file` 都会使用 `AgentSettings.workspace_root` 作为运行时工作区边界。
+- `run_bash` 用于前台短任务；长时间运行的命令应使用 `run_job` 启动并查询高信号状态。
 - 会话历史由 `AgentSettings.sessions_dir` 决定，嵌入式调用时可以通过 settings 覆盖默认目录。
 - `main.py` 的 CLI 仍然保留当前默认行为，只是底层不再依赖单一全局配置真源。

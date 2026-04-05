@@ -338,62 +338,25 @@ class AgentRuntime:
             self.ui_event_printer(f"    ↳ 最终回复 {lines} 行")
             return
 
-        if tool_name == "start_job":
+        if tool_name == "run_job":
             payload = self._parse_output_json_dict(output_text)
             if isinstance(payload, dict):
+                operation = inputs.get("operation") or "<unknown>"
                 job_id = payload.get("job_id") or inputs.get("job_id") or "<unknown>"
                 job_status = payload.get("status") or "unknown"
-                self.ui_event_printer(
-                    f"    ↳ job={job_id} status={job_status}{self._job_error_suffix(payload)}"
-                )
-                return
-
-        if tool_name == "poll_job":
-            payload = self._parse_output_json_dict(output_text)
-            if isinstance(payload, dict):
-                job_id = payload.get("job_id") or inputs.get("job_id") or "<unknown>"
-                job_status = payload.get("status") or "unknown"
+                activity = payload.get("activity") or "unknown"
+                next_poll = payload.get("recommended_poll_after_s")
                 exit_code = payload.get("exit_code")
-                error_suffix = self._job_error_suffix(payload)
-                if exit_code is None:
-                    self.ui_event_printer(f"    ↳ job={job_id} status={job_status}{error_suffix}")
-                else:
-                    self.ui_event_printer(
-                        f"    ↳ job={job_id} status={job_status} exit={exit_code}{error_suffix}"
-                    )
-                return
-
-        if tool_name == "read_job_log":
-            payload = self._parse_output_json_dict(output_text)
-            if isinstance(payload, dict):
-                job_id = payload.get("job_id") or inputs.get("job_id") or "<unknown>"
-                start_offset = payload.get("offset", inputs.get("offset"))
-                next_offset = payload.get("next_offset")
-                bytes_read = payload.get("bytes_read")
-                job_status = payload.get("status")
-                preview = payload.get("preview", "")
-                if not isinstance(preview, str):
-                    preview = str(preview)
-                preview_text = self._preview_first_line(preview, max_len=80)
-                status_part = f" status={job_status}" if job_status is not None else ""
+                output_tail = payload.get("output_tail", "")
+                if not isinstance(output_tail, str):
+                    output_tail = str(output_tail)
+                preview_text = self._preview_first_line(output_tail, max_len=80)
+                next_part = f" next={next_poll}" if next_poll is not None else ""
+                exit_part = f" exit={exit_code}" if exit_code is not None else ""
+                preview_part = f" preview={preview_text}" if preview_text else ""
                 self.ui_event_printer(
-                    "    ↳ "
-                    f"job={job_id} bytes={bytes_read} offset={start_offset}->{next_offset} "
-                    f"preview={preview_text}{status_part}{self._job_error_suffix(payload)}"
-                )
-                return
-
-        if tool_name == "cancel_job":
-            payload = self._parse_output_json_dict(output_text)
-            if isinstance(payload, dict):
-                job_id = payload.get("job_id") or inputs.get("job_id") or "<unknown>"
-                cancelled = payload.get("cancelled")
-                if isinstance(cancelled, bool):
-                    cancelled = str(cancelled).lower()
-                job_status = payload.get("status")
-                self.ui_event_printer(
-                    f"    ↳ job={job_id} cancelled={cancelled} status={job_status}"
-                    f"{self._job_error_suffix(payload)}"
+                    f"    ↳ job={job_id} op={operation} status={job_status} activity={activity}"
+                    f"{next_part}{exit_part}{preview_part}{self._job_error_suffix(payload)}"
                 )
                 return
 

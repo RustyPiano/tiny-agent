@@ -4,6 +4,7 @@ import pathlib
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,7 @@ _RM_RF_PATTERNS = [
 ]
 
 _RM_RF_COMPILED = [re.compile(p) for p in _RM_RF_PATTERNS]
+_DEFAULT_BASH_TIMEOUT_SEC = 30
 
 
 def _tokenize_command(command: str) -> list[str] | None:
@@ -140,35 +142,32 @@ def _is_detached_command(command: str) -> bool:
 
 
 def _select_timeout(command: str, timeout: int | float | str | None) -> int:
+    _ = command
     if timeout is not None:
         try:
             return int(float(timeout))
         except (ValueError, TypeError):
             pass
 
-    cmd = command.strip().lower()
+    return _DEFAULT_BASH_TIMEOUT_SEC
 
-    build_install_patterns = [
-        r"^cargo\s+(build|check|test)(\s|$)",
-        r"^(npm|pnpm|yarn)\s+install(\s|$)",
-        r"^pip\s+install(\s|$)",
-    ]
-    for pattern in build_install_patterns:
-        if re.search(pattern, cmd):
-            return 300
 
-    test_patterns = [
-        r"^pytest(\s|$)",
-        r"^(npm|pnpm|yarn)\s+test(\s|$)",
-        r"^go\s+test(\s|$)",
-        r"^mvn\s+test(\s|$)",
-        r"^gradle\s+test(\s|$)",
-    ]
-    for pattern in test_patterns:
-        if re.search(pattern, cmd):
-            return 180
+def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
 
-    return 60
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGTERM)
+        else:
+            process.terminate()
+        process.wait(timeout=2.0)
+    except subprocess.TimeoutExpired:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+        process.wait(timeout=2.0)
 
 
 def _check_timeout_binary(command: str) -> str | None:
@@ -245,7 +244,7 @@ def run_bash(
     if _is_detached_command(command):
         return (
             "[blocked] 不支持以 '&' 启动后台分离命令。"
-            "请使用任务工具管理长任务：`start_job`、`poll_job`、`read_job_log`、`cancel_job`（如当前环境已启用）。"
+            "请使用任务工具管理长任务：`run_job`（如当前环境已启用）。"
         )
 
     resolved_workdir, workdir_error = _resolve_workdir(workdir, workspace_root=workspace_root)
@@ -259,21 +258,29 @@ def run_bash(
     selected_timeout = _select_timeout(command, timeout)
 
     try:
-        result = subprocess.run(
+        popen_kwargs: dict = {
+            "shell": True,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "cwd": resolved_workdir,
+        }
+        if os.name == "posix":
+            popen_kwargs["start_new_session"] = True
+
+        process = subprocess.Popen(
             command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=selected_timeout,
-            cwd=resolved_workdir,
+            **popen_kwargs,
         )
-        output = result.stdout
-        if result.stderr:
-            output += f"\n[stderr]\n{result.stderr}"
+        stdout, stderr = process.communicate(timeout=selected_timeout)
+        output = stdout
+        if stderr:
+            output += f"\n[stderr]\n{stderr}"
         if not output.strip():
-            output = f"[ok] 命令执行完毕，退出码 {result.returncode}，无输出"
+            output = f"[ok] 命令执行完毕，退出码 {process.returncode}，无输出"
         return _truncate_output(output)
     except subprocess.TimeoutExpired:
+        _terminate_process_tree(process)
         return f"[timeout] 命令在 {selected_timeout}s 内未完成: {command}"
     except Exception as e:
         return f"[error] {e}"
@@ -299,7 +306,7 @@ def register_bash_tool(workspace_root: pathlib.Path | str | None = None) -> None
             "command": {"type": "string", "description": "要执行的 shell 命令"},
             "timeout": {
                 "type": ["integer", "null"],
-                "description": "可选超时秒数；不传时自动按命令类型选择",
+                "description": f"可选超时秒数；不传时默认使用 {_DEFAULT_BASH_TIMEOUT_SEC} 秒短任务超时",
             },
             "workdir": {"type": "string", "description": "工作目录路径，默认当前目录"},
         },
