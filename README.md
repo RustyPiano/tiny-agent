@@ -13,7 +13,8 @@
 
 ```bash
 git clone https://github.com/RustyPiano/tiny-agent.git
-cd agent-framework
+cd tiny-agent
+# 进入仓库根目录后再安装和运行
 pip install -e .
 export ANTHROPIC_API_KEY=xxx
 agent
