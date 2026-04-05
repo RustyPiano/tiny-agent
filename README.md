@@ -7,15 +7,33 @@
 - Python 3.11+
 - Anthropic 或 OpenAI API Key
 
+## 安装方式
+
+最短路径：
+
+```bash
+git clone <repo-url>
+cd agent-framework
+pip install -e .
+export ANTHROPIC_API_KEY=xxx
+agent
+```
+
+如果你要做开发、跑测试或改代码，安装开发依赖：
+
+```bash
+pip install -e ".[dev]"
+```
+
+如果你只想运行，不需要开发工具：
+
+```bash
+pip install -e .
+```
+
 ## 快速开始
 
 ```bash
-# 安装依赖（推荐）
-pip install -e ".[dev]"
-
-# 或仅安装运行时依赖
-pip install -e .
-
 # 配置 API Key
 export ANTHROPIC_API_KEY=xxx
 
