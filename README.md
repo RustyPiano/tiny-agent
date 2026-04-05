@@ -88,9 +88,10 @@ agent-framework/
 ## LiteAgent 哲学对齐
 
 - 静态 system prompt 现在声明了严格 ReAct JSON 契约（`"thought"` / `"action"` / `"action_input"`）。
-- prompt 明确了工具白名单、安全约束和上下文纪律（轮次/历史/记忆边界）。
+- prompt 明确了运行时注册工具集合、安全约束和上下文纪律（轮次/历史/记忆边界）。
 - 静态区域显式引用 `__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__`，用于区分静态契约与运行时动态上下文。
 - 相关测试是轻量 anti-regression 护栏（检查关键条款是否存在），不等价于对模型行为做完整语义验证。
+- `workspace_root` 和 `sessions_dir` 由 `AgentSettings` 注入到 runtime 和工具层，不再只依赖全局配置。
 - 详细说明见 `docs/liteagent-philosophy-alignment.md`。
 
 ## 扩展指南
@@ -107,6 +108,8 @@ agent-framework/
 - `agent_framework/extensions/providers/*.py`
 
 扩展模块需要提供模块级 `register()` 合约函数，加载器会导入模块后调用该函数完成注册。
+
+启动时会把当前已注册工具集合动态写入 prompt 的 allowed-tools 段，因此扩展工具一旦注册，就会进入模型可见的工具列表。
 
 安全说明（重要）：扩展本质上是 Python 代码，加载时会执行任意模块代码与 `register()` 逻辑。请仅安装和启用你信任来源的扩展。
 
@@ -175,3 +178,9 @@ description: 代码实现与重构最佳实践
 2. 自动把技能元数据注入 system prompt 的 `Available Skills`。
 3. 当模型需要技能完整内容时，调用 `use_skill(name)` 按需加载正文。
 4. 同名技能按项目级覆盖全局级。
+
+## 会话与工作区
+
+- 文件工具、`run_bash`、`grep`、`list_dir`、`start_job`、`edit_file` 都会使用 `AgentSettings.workspace_root` 作为运行时工作区边界。
+- 会话历史由 `AgentSettings.sessions_dir` 决定，嵌入式调用时可以通过 settings 覆盖默认目录。
+- `main.py` 的 CLI 仍然保留当前默认行为，只是底层不再依赖单一全局配置真源。

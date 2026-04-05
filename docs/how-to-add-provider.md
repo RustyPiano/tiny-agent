@@ -114,6 +114,11 @@ def validate(self) -> list[str]:
     # ...
 ```
 
+## 运行时提示
+
+- Provider 接口之外的工具集合由 runtime 负责注入，provider 只需要按当前运行时传入的 `messages`、`system` 和 `tools` 工作。
+- 如果你的 provider 对工具 schema 有特殊要求，优先在 provider 的 `chat()` / `format_tool_result()` / `tool_results_as_message()` 里做适配，而不是改动核心 prompt 白名单。
+
 ## 详细说明
 
 ### BaseLLMProvider 接口

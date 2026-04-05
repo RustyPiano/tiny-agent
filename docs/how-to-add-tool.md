@@ -179,6 +179,8 @@ def register_search_tool() -> None:
 
 扩展模块会被 Python 直接导入并执行模块顶层代码，再调用 `register()`。这意味着扩展具备执行任意代码的能力。请仅使用可信来源的扩展文件。
 
+一旦 `register()` 成功执行，工具会在下一次 bootstrap / runtime 装配时进入当前运行时的 allowed-tools 列表，并被 prompt 动态注入。
+
 ## 测试工具
 
 创建测试文件 `tests/test_my_tool.py`:
